@@ -112,6 +112,24 @@ function validateQuotes(rubric: RubricResult, transcript: TranscriptEntry[]): bo
   return true
 }
 
+// Llama 3 sometimes emits duplicate JSON keys which Groq rejects with 400.
+// This extracts the rubric from the raw failed_generation string by removing
+// any trailing empty duplicate keys before parsing.
+function salvageRubric(failedGen: string): RubricResult | null {
+  try {
+    // Strip <function=submit_evaluation>...</function> wrapper
+    const match = failedGen.match(/<function=\w+>([\s\S]+)<\/function>/)
+    const jsonStr = match ? match[1] : failedGen
+
+    // Remove trailing duplicate empty object keys, e.g. `,"dimensions":{}` before final `}`
+    const fixed = jsonStr.replace(/,\s*"(\w+)"\s*:\s*\{\s*\}(?=\s*\})/g, '')
+
+    return JSON.parse(fixed) as RubricResult
+  } catch {
+    return null
+  }
+}
+
 export async function evaluateInterview(
   transcript: TranscriptEntry[],
   candidateName: string,
@@ -136,13 +154,27 @@ ${transcriptText}`
       })
     }
 
-    const response = await client.chat.completions.create({
-      model: EVALUATOR_MODEL,
-      max_tokens: 2000,
-      messages: [{ role: 'system', content: EVALUATOR_SYSTEM }, ...messages],
-      tools: [EVALUATE_TOOL],
-      tool_choice: 'required',
-    })
+    let response
+    try {
+      response = await client.chat.completions.create({
+        model: EVALUATOR_MODEL,
+        max_tokens: 2000,
+        messages: [{ role: 'system', content: EVALUATOR_SYSTEM }, ...messages],
+        tools: [EVALUATE_TOOL],
+        tool_choice: 'required',
+      })
+    } catch (err: unknown) {
+      // Llama 3 sometimes emits duplicate JSON keys (e.g. "dimensions" twice),
+      // causing Groq's schema validator to reject with 400. If the error includes
+      // failed_generation we can salvage the rubric from the raw output.
+      const failedGen = (err as { error?: { error?: { failed_generation?: string } } })
+        ?.error?.error?.failed_generation
+      if (failedGen) {
+        const salvaged = salvageRubric(failedGen)
+        if (salvaged) return salvaged
+      }
+      throw err
+    }
 
     const toolCall = response.choices[0].message.tool_calls?.[0]
     if (!toolCall) throw new Error('No tool call from evaluator')
