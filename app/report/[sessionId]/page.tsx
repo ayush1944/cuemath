@@ -31,19 +31,12 @@ const RECOMMENDATION_CONFIG = {
   },
 }
 
-function ScoreDots({ score }: { score: number }) {
+function ScoreBar({ score }: { score: number }) {
+  // Orange intensity: 1=lightest, 5=most saturated — warm palette, never red/green
+  const fill = score >= 5 ? '#ea580c' : score === 4 ? '#f97316' : score === 3 ? '#fb923c' : score === 2 ? '#fdba74' : '#fed7aa'
   return (
-    <div className="flex gap-1.5">
-      {[1, 2, 3, 4, 5].map((i) => (
-        <div
-          key={i}
-          className="w-4 h-4 rounded-full transition-all"
-          style={{
-            background: i <= score ? '#F97316' : '#e5e7eb',
-            opacity: i <= score ? 1 - (score - i) * 0.1 : 1,
-          }}
-        />
-      ))}
+    <div style={{ height: 7, background: '#ffedd5', borderRadius: 99, overflow: 'hidden' }}>
+      <div style={{ height: '100%', borderRadius: 99, background: fill, width: `${(score / 5) * 100}%` }} />
     </div>
   )
 }
@@ -51,11 +44,12 @@ function ScoreDots({ score }: { score: number }) {
 function DimensionCard({ name, dim }: { name: string; dim: DimensionScore }) {
   return (
     <div className="bg-white rounded-xl border border-gray-100 p-5">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-2">
         <h3 className="font-semibold text-gray-800 text-sm">{DIMENSION_LABELS[name]}</h3>
-        <ScoreDots score={dim.score} />
+        <span style={{ fontSize: 12, fontWeight: 700, color: '#f97316' }}>{dim.score} / 5</span>
       </div>
-      <p className="text-gray-600 text-sm leading-relaxed mb-2">{dim.justification}</p>
+      <ScoreBar score={dim.score} />
+      <p className="text-gray-600 text-sm leading-relaxed mb-2 mt-3">{dim.justification}</p>
       {dim.evidence_quote !== 'insufficient_evidence_to_assess' && (
         <blockquote className="border-l-2 border-orange-200 pl-3 text-xs text-gray-400 italic">
           &ldquo;{dim.evidence_quote}&rdquo;
