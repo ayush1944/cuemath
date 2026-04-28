@@ -255,7 +255,9 @@ function InterviewContent() {
 
     try {
       if (!streamRef.current) {
-        streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true })
+        streamRef.current = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        })
       }
       if (!audioCtxRef.current) audioCtxRef.current = new AudioContext()
 
@@ -348,6 +350,8 @@ function InterviewContent() {
 
       setCurrentQuestion(currentQuestionIndex)
       await speakText(utterance)
+      // Brief pause so mic doesn't capture TTS reverb
+      await new Promise(r => setTimeout(r, 300))
       startListeningRef.current()
     } catch {
       setErrorMsg('Connection error. Please refresh and try again.')
@@ -391,7 +395,9 @@ function InterviewContent() {
     cleanupRef.current = doCleanup
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      })
       if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
       streamRef.current = stream
 
