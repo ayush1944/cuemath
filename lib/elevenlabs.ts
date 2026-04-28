@@ -1,35 +1,18 @@
-const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY
-const VOICE_ID = process.env.ELEVENLABS_VOICE_ID || '21m00Tcm4TlvDq8ikWAM' // Rachel
+import OpenAI from 'openai'
+
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
 export async function synthesizeSpeech(text: string): Promise<ArrayBuffer | null> {
-  if (!ELEVENLABS_API_KEY) return null
-
+  if (!process.env.OPENAI_API_KEY) return null
   try {
-    const response = await fetch(
-      `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`,
-      {
-        method: 'POST',
-        headers: {
-          'xi-api-key': ELEVENLABS_API_KEY,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          text,
-          model_id: 'eleven_turbo_v2_5',
-          voice_settings: { stability: 0.5, similarity_boost: 0.75 },
-        }),
-      }
-    )
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => '')
-      console.error(`ElevenLabs API error ${response.status} (voice: ${VOICE_ID}):`, body)
-      return null
-    }
-
+    const response = await client.audio.speech.create({
+      model: 'tts-1',
+      voice: 'alloy',
+      input: text,
+    })
     return response.arrayBuffer()
   } catch (e) {
-    console.error('ElevenLabs network error:', e)
+    console.error('OpenAI TTS error:', e)
     return null
   }
 }

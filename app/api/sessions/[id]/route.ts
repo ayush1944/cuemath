@@ -22,7 +22,13 @@ export async function PUT(
     const existing = await getSession(id)
     if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-    const updated: Session = { ...existing, ...updates }
+    // Whitelist: only allow safe in-flight fields; never let a client overwrite id, rubric, or completed status
+    const allowed: Partial<Session> = {}
+    if (updates.currentQuestionIndex !== undefined) allowed.currentQuestionIndex = updates.currentQuestionIndex
+    if (updates.lastUtteranceType !== undefined) allowed.lastUtteranceType = updates.lastUtteranceType
+    if (updates.status === 'abandoned') allowed.status = 'abandoned'
+
+    const updated: Session = { ...existing, ...allowed }
     await saveSession(updated)
     return NextResponse.json({ session: updated })
   } catch (e) {

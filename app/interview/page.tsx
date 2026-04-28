@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useCallback, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import type { TranscriptEntry } from '@/types'
 
-type InterviewState = 'loading' | 'ai_speaking' | 'listening' | 'processing' | 'evaluating' | 'error'
+type InterviewState = 'ready' | 'loading' | 'ai_speaking' | 'listening' | 'processing' | 'evaluating' | 'error'
 
 const SILENCE_THRESHOLD = 0.015
 const SILENCE_DURATION_MS = 1500
@@ -36,7 +36,6 @@ function Orb({ state, muted }: { state: InterviewState; muted: boolean }) {
 
   return (
     <div className="relative flex items-center justify-center" style={{ width: 80, height: 80 }}>
-      {/* Ripple ring */}
       {(isListening || isSpeaking) && (
         <>
           <div className="absolute rounded-full" style={{
@@ -54,11 +53,8 @@ function Orb({ state, muted }: { state: InterviewState; muted: boolean }) {
         </>
       )}
       <div style={{
-        width: 60,
-        height: 60,
-        borderRadius: '50%',
-        background: gradient,
-        boxShadow: shadow,
+        width: 60, height: 60, borderRadius: '50%',
+        background: gradient, boxShadow: shadow,
         transition: 'background 0.6s ease, box-shadow 0.6s ease',
         animation: (isListening || isSpeaking) ? 'pulse-ring 3s ease-in-out infinite' : isBusy ? 'shimmer 1.4s ease-in-out infinite' : 'none',
       }} />
@@ -90,19 +86,21 @@ function InterviewContent() {
   const searchParams = useSearchParams()
   const sessionId = searchParams.get('session')
 
-  const [state, setState]               = useState<InterviewState>('loading')
+  const [state, setState]               = useState<InterviewState>('ready')
   const [transcript, setTranscript]     = useState<TranscriptEntry[]>([])
   const [currentQuestion, setCurrentQuestion] = useState(1)
   const [elapsed, setElapsed]           = useState(0)
   const [errorMsg, setErrorMsg]         = useState('')
   const [hasSpeech, setHasSpeech]       = useState(false)
-  const [candidateName, setCandidateName] = useState('You')
+  const [candidateName, setCandidateName] = useState('')
   const [isMuted, setIsMuted]           = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [micDevices, setMicDevices]     = useState<MediaDeviceInfo[]>([])
   const [countdown, setCountdown]       = useState<number | null>(null)
   const [showEndConfirm, setShowEndConfirm] = useState(false)
   const [focusWarning, setFocusWarning] = useState(false)
+  const [fullscreenExited, setFullscreenExited] = useState(false)
+  const [isBeginning, setIsBeginning] = useState(false)
 
   const streamRef          = useRef<MediaStream | null>(null)
   const recorderRef        = useRef<MediaRecorder | null>(null)
@@ -118,17 +116,13 @@ function InterviewContent() {
   const chatEndRef         = useRef<HTMLDivElement | null>(null)
   const startListeningRef  = useRef<() => Promise<void>>(async () => {})
   const runTurnRef         = useRef<(a?: string) => Promise<void>>(async () => {})
+  const cleanupRef         = useRef<(() => void) | null>(null)
 
   useEffect(() => { transcriptRef.current = transcript }, [transcript])
   useEffect(() => { questionRef.current = currentQuestion }, [currentQuestion])
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [transcript])
 
-  useEffect(() => {
-    const start = Date.now()
-    timerRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
-    return () => { if (timerRef.current) clearInterval(timerRef.current) }
-  }, [])
-
+  /* ── Session name ── */
   useEffect(() => {
     if (!sessionId) return
     fetch(`/api/sessions/${sessionId}`)
@@ -137,10 +131,30 @@ function InterviewContent() {
       .catch(() => {})
   }, [sessionId])
 
+  /* ── Mic device list ── */
   useEffect(() => {
     navigator.mediaDevices.enumerateDevices()
       .then(devs => setMicDevices(devs.filter(d => d.kind === 'audioinput')))
       .catch(() => {})
+  }, [])
+
+  /* ── Session guard + cleanup ── */
+  useEffect(() => {
+    if (!sessionId) { router.push('/'); return }
+    return () => {
+      cleanupRef.current?.()
+      if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel()
+    }
+  }, [sessionId, router])
+
+  /* ── Fullscreen exit detection ── */
+  useEffect(() => {
+    const handleFSChange = () => {
+      if (!document.fullscreenElement) setFullscreenExited(true)
+      else setFullscreenExited(false)
+    }
+    document.addEventListener('fullscreenchange', handleFSChange)
+    return () => document.removeEventListener('fullscreenchange', handleFSChange)
   }, [])
 
   /* ── Tab-switch detection ── */
@@ -201,7 +215,6 @@ function InterviewContent() {
   /* ── TTS ── */
   const speakText = useCallback(async (text: string) => {
     setState('ai_speaking')
-    // Cancel any queued browser speech before starting
     if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel()
     try {
       const res = await fetch('/api/tts', {
@@ -224,7 +237,6 @@ function InterviewContent() {
         await new Promise<void>(resolve => {
           const utter = new SpeechSynthesisUtterance(ttsText)
           utter.rate = 0.95
-          // 15 s safety timeout — browser TTS can hang if speech service is unavailable
           const timeout = setTimeout(resolve, 15000)
           utter.onend  = () => { clearTimeout(timeout); resolve() }
           utter.onerror = () => { clearTimeout(timeout); resolve() }
@@ -280,7 +292,6 @@ function InterviewContent() {
           const v = (dataArray[i] - 128) / 128; sum += v * v
         }
         const rms = Math.sqrt(sum / dataArray.length)
-        // Skip VAD if muted
         if (streamRef.current?.getAudioTracks()[0]?.enabled === false) return
 
         if (rms > SILENCE_THRESHOLD) {
@@ -347,51 +358,67 @@ function InterviewContent() {
   useEffect(() => { startListeningRef.current = startListening }, [startListening])
   useEffect(() => { runTurnRef.current = runInterviewTurn }, [runInterviewTurn])
 
-  /* ── Mount: 3-second countdown then start interview ── */
-  useEffect(() => {
-    if (!sessionId) { router.push('/'); return }
+  /* ── Begin interview (triggered by user click) ── */
+  const beginInterview = useCallback(async () => {
+    if (isBeginning) return
+    setIsBeginning(true)
+    // Request fullscreen — must be called from a user gesture
+    try {
+      await document.documentElement.requestFullscreen()
+    } catch {
+      // Fullscreen denied or unsupported — continue without it
+    }
+
+    setState('loading')
+
+    // Start elapsed timer
+    const start = Date.now()
+    timerRef.current = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
+
     let cancelled = false
     let countdownTimer: ReturnType<typeof setInterval> | null = null
 
-    navigator.mediaDevices.getUserMedia({ audio: true })
-      .then(stream => {
-        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
-        streamRef.current = stream
-
-        let count = 3
-        setCountdown(count)
-        countdownTimer = setInterval(() => {
-          count -= 1
-          if (count > 0) {
-            setCountdown(count)
-          } else {
-            clearInterval(countdownTimer!)
-            countdownTimer = null
-            setCountdown(null)
-            if (!cancelled) runTurnRef.current()
-          }
-        }, 1000)
-      })
-      .catch(() => {
-        if (!cancelled) { setErrorMsg('Microphone access is required.'); setState('error') }
-      })
-
-    return () => {
+    const doCleanup = () => {
       cancelled = true
       if (countdownTimer) clearInterval(countdownTimer)
-      if (typeof speechSynthesis !== 'undefined') speechSynthesis.cancel()
+      if (timerRef.current) clearInterval(timerRef.current)
       streamRef.current?.getTracks().forEach(t => t.stop())
       if (vadIntervalRef.current) clearInterval(vadIntervalRef.current)
       if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current)
       if (maxSilenceTimerRef.current) clearTimeout(maxSilenceTimerRef.current)
+      if (audioCtxRef.current) { audioCtxRef.current.close().catch(() => {}); audioCtxRef.current = null }
     }
-  }, [sessionId, router])
+    cleanupRef.current = doCleanup
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
+      streamRef.current = stream
+
+      let count = 3
+      setCountdown(count)
+      countdownTimer = setInterval(() => {
+        count -= 1
+        if (count > 0) {
+          setCountdown(count)
+        } else {
+          clearInterval(countdownTimer!)
+          countdownTimer = null
+          setCountdown(null)
+          if (!cancelled) runTurnRef.current()
+        }
+      }, 1000)
+    } catch {
+      if (!cancelled) { setErrorMsg('Microphone access is required.'); setState('error') }
+    }
+  }, [])
 
   /* ── Helpers ── */
   const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
   const initials = (n: string) => n.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
 
   const statusLabel: Record<InterviewState, string> = {
+    ready:      '',
     loading:    'Connecting…',
     ai_speaking:'Speaking…',
     listening:  isMuted ? 'Muted' : hasSpeech ? 'Listening…' : 'Your turn — speak now',
@@ -400,12 +427,83 @@ function InterviewContent() {
     error:      errorMsg,
   }
 
+  /* ── Ready screen ── */
+  if (state === 'ready') {
+    return (
+      <div style={{
+        minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center',
+        background: 'linear-gradient(135deg, #fff7ed 0%, #FAFAF8 50%, #fef3c7 100%)',
+        fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
+        padding: 24,
+      }}>
+        <div style={{
+          width: '100%', maxWidth: 480,
+          background: '#fff', borderRadius: 28,
+          border: '1px solid #f0ede8',
+          boxShadow: '0 8px 48px rgba(0,0,0,0.08), 0 2px 8px rgba(0,0,0,0.04)',
+          padding: '48px 40px',
+          textAlign: 'center',
+        }}>
+          {/* Logo */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 36 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: 'linear-gradient(135deg,#f97316,#ef4444)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 800, fontSize: 16 }}>C</div>
+            <span style={{ fontWeight: 700, fontSize: 17, color: '#111' }}>Cuemath</span>
+          </div>
+
+          {/* Greeting */}
+          <h1 style={{ fontSize: 26, fontWeight: 700, color: '#111', margin: '0 0 8px', lineHeight: 1.2 }}>
+            {candidateName ? `Hi, ${candidateName.split(' ')[0]}!` : 'Ready to begin?'}
+          </h1>
+          <p style={{ fontSize: 15, color: '#888', margin: '0 0 36px', lineHeight: 1.6 }}>
+            Your Cuemath tutor screening interview is about to start.
+          </p>
+
+          {/* Checklist */}
+          <div style={{ background: '#fafaf8', borderRadius: 16, border: '1px solid #f0ede8', padding: '20px 24px', marginBottom: 32, textAlign: 'left' }}>
+            {[
+              ['🎧', 'Use headphones or a quiet space'],
+              ['🖥️', 'The interview will open in fullscreen'],
+              ['🎤', 'Allow microphone access when prompted'],
+              ['⏱️', 'This takes about 10–15 minutes'],
+            ].map(([icon, text], i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderBottom: i < 3 ? '1px solid #f0ede8' : 'none' }}>
+                <span style={{ fontSize: 18, flexShrink: 0 }}>{icon}</span>
+                <span style={{ fontSize: 14, color: '#555' }}>{text}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Begin button */}
+          <button
+            onClick={beginInterview}
+            disabled={isBeginning}
+            style={{
+              width: '100%', padding: '15px 0', borderRadius: 14,
+              background: isBeginning ? '#fdba74' : 'linear-gradient(135deg, #f97316, #ef4444)',
+              border: 'none', cursor: isBeginning ? 'not-allowed' : 'pointer',
+              color: '#fff', fontSize: 16, fontWeight: 700,
+              boxShadow: isBeginning ? 'none' : '0 4px 20px rgba(249,115,22,0.4)',
+              transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+            }}
+            onMouseEnter={e => { if (!isBeginning) { (e.target as HTMLButtonElement).style.transform = 'translateY(-1px)'; (e.target as HTMLButtonElement).style.boxShadow = '0 6px 24px rgba(249,115,22,0.5)' } }}
+            onMouseLeave={e => { (e.target as HTMLButtonElement).style.transform = ''; (e.target as HTMLButtonElement).style.boxShadow = isBeginning ? 'none' : '0 4px 20px rgba(249,115,22,0.4)' }}
+          >
+            {isBeginning ? 'Starting…' : 'Begin Interview →'}
+          </button>
+
+          <p style={{ marginTop: 16, fontSize: 12, color: '#bbb' }}>
+            By continuing you agree to be recorded for evaluation purposes.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={{ minHeight: '100vh', display: 'flex', background: '#f6f6f3', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
 
       {/* ── Left sidebar ── */}
       <aside style={{ width: 288, padding: 20, flexShrink: 0, display: 'none' }} className="md:flex! flex-col gap-4">
-        {/* Brand card */}
         <div style={{ background: '#fff', borderRadius: 20, border: '1px solid #ebebeb', padding: '24px 22px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
             <div style={{ width: 34, height: 34, borderRadius: 10, background: 'linear-gradient(135deg,#f97316,#ef4444)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontWeight: 700, fontSize: 15 }}>C</div>
@@ -414,9 +512,7 @@ function InterviewContent() {
               <div style={{ fontSize: 11, color: '#999' }}>Tutor Screening</div>
             </div>
           </div>
-
           <div style={{ height: 1, background: '#f0f0ec', margin: '0 0 20px' }} />
-
           <p style={{ fontSize: 13, color: '#555', lineHeight: 1.65, margin: '0 0 8px' }}>
             You&apos;re being screened for{' '}
             <strong style={{ color: '#111' }}>Cuemath Tutor</strong>.
@@ -424,7 +520,6 @@ function InterviewContent() {
           <p style={{ fontSize: 12, color: '#aaa', margin: 0 }}>Take a breath. Be yourself.</p>
         </div>
 
-        {/* Progress card */}
         <div style={{ background: '#fff', borderRadius: 20, border: '1px solid #ebebeb', padding: '20px 22px', boxShadow: '0 1px 4px rgba(0,0,0,0.05)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
             <span style={{ fontSize: 12, color: '#888', fontWeight: 500 }}>Progress</span>
@@ -440,7 +535,6 @@ function InterviewContent() {
           </div>
         </div>
 
-        {/* Tips card */}
         <div style={{ background: 'linear-gradient(135deg,#fff7ed,#fff)', borderRadius: 20, border: '1px solid #fed7aa', padding: '18px 22px' }}>
           <p style={{ fontSize: 12, fontWeight: 600, color: '#ea580c', margin: '0 0 8px' }}>Quick tips</p>
           {['Speak clearly and at a comfortable pace', 'Take a moment to think before answering', 'Specific examples work best'].map((tip, i) => (
@@ -464,14 +558,12 @@ function InterviewContent() {
             </div>
             <span style={{ fontSize: 11.5, color: '#999' }}>Cuemath · AI-powered screening</span>
           </div>
-          {/* LIVE indicator — visible while interview is actively running */}
           {(state === 'listening' || state === 'ai_speaking') && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 5, background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.25)', borderRadius: 99, padding: '3px 9px' }}>
               <div style={{ width: 7, height: 7, borderRadius: '50%', background: '#22c55e', animation: 'pulse-ring 1.8s ease-in-out infinite' }} />
               <span style={{ fontSize: 10.5, color: '#16a34a', fontWeight: 700, letterSpacing: '0.04em' }}>LIVE</span>
             </div>
           )}
-          {/* Mobile Q counter */}
           <div className="md:hidden" style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 99, padding: '3px 10px', fontSize: 11, fontWeight: 700, color: '#ea580c' }}>
             Q{currentQuestion}/5
           </div>
@@ -479,7 +571,6 @@ function InterviewContent() {
 
         {/* Messages */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {/* Countdown / connecting shimmer */}
           {state === 'loading' && (
             countdown !== null ? (
               <div className="fade-in-up" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '56px 0' }}>
@@ -503,23 +594,19 @@ function InterviewContent() {
             const isAI = entry.role === 'ai'
             return (
               <div key={i} className="fade-in-up" style={{ display: 'flex', flexDirection: isAI ? 'row' : 'row-reverse', alignItems: 'flex-end', gap: 10 }}>
-                {/* Avatar */}
                 <div style={{
                   width: 34, height: 34, borderRadius: '50%', flexShrink: 0,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 11, fontWeight: 700, color: '#fff',
                   background: isAI ? 'linear-gradient(135deg,#f97316,#ef4444)' : 'linear-gradient(135deg,#6366f1,#8b5cf6)',
                 }}>
-                  {isAI ? 'C' : initials(candidateName)}
+                  {isAI ? 'C' : initials(candidateName || 'You')}
                 </div>
-                {/* Bubble */}
                 <div style={{
-                  maxWidth: 420,
-                  padding: '11px 16px',
+                  maxWidth: 420, padding: '11px 16px',
                   borderRadius: isAI ? '18px 18px 18px 4px' : '18px 18px 4px 18px',
                   background: isAI ? '#f8f8f5' : '#eef2ff',
-                  fontSize: 14, lineHeight: 1.6,
-                  color: '#222',
+                  fontSize: 14, lineHeight: 1.6, color: '#222',
                   boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
                 }}>
                   {entry.content}
@@ -528,7 +615,6 @@ function InterviewContent() {
             )
           })}
 
-          {/* Typing dots */}
           {(state === 'processing' || state === 'evaluating') && (
             <div className="fade-in-up" style={{ display: 'flex', alignItems: 'flex-end', gap: 10 }}>
               <div style={{ width: 34, height: 34, borderRadius: '50%', background: 'linear-gradient(135deg,#f97316,#ef4444)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 11, fontWeight: 700, flexShrink: 0 }}>C</div>
@@ -540,7 +626,7 @@ function InterviewContent() {
           <div ref={chatEndRef} />
         </div>
 
-        {/* Audio settings — collapsible */}
+        {/* Audio settings */}
         <div style={{ borderTop: '1px solid #f2f2ee', flexShrink: 0 }}>
           <button
             onClick={() => setSettingsOpen(o => !o)}
@@ -552,7 +638,6 @@ function InterviewContent() {
               <polyline points="6 9 12 15 18 9"/>
             </svg>
           </button>
-
           {settingsOpen && (
             <div style={{ padding: '0 24px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div>
@@ -588,16 +673,11 @@ function InterviewContent() {
 
         {/* Bottom bar */}
         <div style={{ borderTop: '1px solid #f2f2ee', padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-          {/* Timer */}
           <span style={{ fontSize: 13, color: '#aaa', fontVariantNumeric: 'tabular-nums', width: 52 }}>{fmt(elapsed)}</span>
-
-          {/* Orb + label */}
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
             <Orb state={state} muted={isMuted} />
             <span style={{ fontSize: 11, color: '#aaa', fontWeight: 500 }}>{statusLabel[state]}</span>
           </div>
-
-          {/* Controls */}
           <div style={{ display: 'flex', gap: 10, width: 'auto', justifyContent: 'flex-end' }}>
             {state === 'error' ? (
               <button onClick={() => router.push('/')}
@@ -606,54 +686,19 @@ function InterviewContent() {
               </button>
             ) : (
               <>
-                {/* Mute toggle */}
-                <button
-                  onClick={toggleMute}
-                  title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
-                  style={{
-                    width: 44, height: 44, borderRadius: '50%',
-                    background: isMuted ? '#ef4444' : '#111',
-                    border: 'none', cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: '#fff',
-                    boxShadow: isMuted ? '0 0 0 3px rgba(239,68,68,0.25)' : 'none',
-                    transition: 'all 0.2s ease',
-                  }}>
+                <button onClick={toggleMute} title={isMuted ? 'Unmute microphone' : 'Mute microphone'}
+                  style={{ width: 44, height: 44, borderRadius: '50%', background: isMuted ? '#ef4444' : '#111', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', boxShadow: isMuted ? '0 0 0 3px rgba(239,68,68,0.25)' : 'none', transition: 'all 0.2s ease' }}>
                   <MicIcon muted={isMuted} />
                 </button>
-
-                {/* Submit answer early (only during listening) */}
                 {state === 'listening' && (
-                  <button
-                    onClick={stopRecording}
-                    title="Submit answer"
-                    style={{
-                      height: 44, padding: '0 16px', borderRadius: 99,
-                      background: 'linear-gradient(135deg,#f97316,#ef4444)',
-                      border: 'none', cursor: 'pointer',
-                      color: '#fff', fontSize: 12, fontWeight: 600,
-                      display: 'flex', alignItems: 'center', gap: 6,
-                      boxShadow: '0 2px 12px rgba(249,115,22,0.4)',
-                    }}>
+                  <button onClick={stopRecording} title="Submit answer"
+                    style={{ height: 44, padding: '0 16px', borderRadius: 99, background: 'linear-gradient(135deg,#f97316,#ef4444)', border: 'none', cursor: 'pointer', color: '#fff', fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, boxShadow: '0 2px 12px rgba(249,115,22,0.4)' }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M2 21l21-9L2 3v7l15 2-15 2v7z"/></svg>
                     Send
                   </button>
                 )}
-
-                {/* End interview — opens confirmation modal */}
-                <button
-                  onClick={() => setShowEndConfirm(true)}
-                  title="End interview"
-                  disabled={state === 'evaluating'}
-                  style={{
-                    width: 44, height: 44, borderRadius: '50%',
-                    background: 'linear-gradient(135deg,#f97316,#ef4444)',
-                    border: 'none', cursor: state === 'evaluating' ? 'not-allowed' : 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    color: '#fff',
-                    opacity: state === 'evaluating' ? 0.4 : 1,
-                    boxShadow: '0 2px 12px rgba(239,68,68,0.35)',
-                  }}>
+                <button onClick={() => setShowEndConfirm(true)} title="End interview" disabled={state === 'evaluating'}
+                  style={{ width: 44, height: 44, borderRadius: '50%', background: 'linear-gradient(135deg,#f97316,#ef4444)', border: 'none', cursor: state === 'evaluating' ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', opacity: state === 'evaluating' ? 0.4 : 1, boxShadow: '0 2px 12px rgba(239,68,68,0.35)' }}>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                     <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                   </svg>
@@ -664,45 +709,48 @@ function InterviewContent() {
         </div>
       </div>
 
-      {/* ── Focus warning toast (first tab switch only) ── */}
-      {focusWarning && (
+      {/* ── Fullscreen exit banner ── */}
+      {fullscreenExited && state !== 'ready' && state !== 'evaluating' && state !== 'error' && (
         <div style={{
-          position: 'fixed', top: 20, left: '50%', transform: 'translateX(-50%)',
-          zIndex: 100, background: '#1e293b', color: '#fff',
-          padding: '10px 20px', borderRadius: 99, fontSize: 13, fontWeight: 500,
-          boxShadow: '0 4px 20px rgba(0,0,0,0.3)', whiteSpace: 'nowrap',
-          animation: 'fade-in-up 0.2s ease',
+          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 200,
+          background: '#1e293b', color: '#fff',
+          padding: '12px 24px',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
         }}>
+          <span style={{ fontSize: 14, fontWeight: 500 }}>⚠ Please return to fullscreen to continue your interview.</span>
+          <button
+            onClick={() => document.documentElement.requestFullscreen().catch(() => {})}
+            style={{ padding: '6px 16px', borderRadius: 8, background: 'linear-gradient(135deg,#f97316,#ef4444)', border: 'none', cursor: 'pointer', color: '#fff', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap' }}>
+            Re-enter fullscreen
+          </button>
+        </div>
+      )}
+
+      {/* ── Focus warning toast ── */}
+      {focusWarning && (
+        <div style={{ position: 'fixed', top: 20, left: '50%', transform: 'translateX(-50%)', zIndex: 100, background: '#1e293b', color: '#fff', padding: '10px 20px', borderRadius: 99, fontSize: 13, fontWeight: 500, boxShadow: '0 4px 20px rgba(0,0,0,0.3)', whiteSpace: 'nowrap', animation: 'fade-in-up 0.2s ease' }}>
           Please stay focused on the interview.
         </div>
       )}
 
       {/* ── End interview confirmation modal ── */}
       {showEndConfirm && (
-        <div
-          onClick={() => setShowEndConfirm(false)}
-          style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)' }}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            className="fade-in-up"
-            style={{ background: '#fff', borderRadius: 20, padding: '32px 28px', maxWidth: 360, width: '90%', boxShadow: '0 24px 64px rgba(0,0,0,0.2)' }}
-          >
+        <div onClick={() => setShowEndConfirm(false)}
+          style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)' }}>
+          <div onClick={e => e.stopPropagation()} className="fade-in-up"
+            style={{ background: '#fff', borderRadius: 20, padding: '32px 28px', maxWidth: 360, width: '90%', boxShadow: '0 24px 64px rgba(0,0,0,0.2)' }}>
             <h2 style={{ fontSize: 18, fontWeight: 700, color: '#111', margin: '0 0 8px' }}>End interview?</h2>
             <p style={{ fontSize: 14, color: '#666', lineHeight: 1.6, margin: '0 0 24px' }}>
               Your progress won&apos;t be saved and you&apos;ll need to start over. Are you sure?
             </p>
             <div style={{ display: 'flex', gap: 10 }}>
-              <button
-                onClick={() => setShowEndConfirm(false)}
-                style={{ flex: 1, padding: '11px 0', borderRadius: 12, background: '#f5f5f2', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600, color: '#555' }}
-              >
+              <button onClick={() => setShowEndConfirm(false)}
+                style={{ flex: 1, padding: '11px 0', borderRadius: 12, background: '#f5f5f2', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600, color: '#555' }}>
                 Keep going
               </button>
-              <button
-                onClick={() => { streamRef.current?.getTracks().forEach(t => t.stop()); router.push('/') }}
-                style={{ flex: 1, padding: '11px 0', borderRadius: 12, background: 'linear-gradient(135deg,#f97316,#ef4444)', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600, color: '#fff', boxShadow: '0 4px 14px rgba(249,115,22,0.4)' }}
-              >
+              <button onClick={() => { streamRef.current?.getTracks().forEach(t => t.stop()); router.push('/') }}
+                style={{ flex: 1, padding: '11px 0', borderRadius: 12, background: 'linear-gradient(135deg,#f97316,#ef4444)', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600, color: '#fff', boxShadow: '0 4px 14px rgba(249,115,22,0.4)' }}>
                 End interview
               </button>
             </div>

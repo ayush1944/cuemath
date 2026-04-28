@@ -16,9 +16,14 @@ function MicCheckContent() {
   const recorderRef = useRef<MediaRecorder | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const chunksRef = useRef<Blob[]>([])
+  const objectUrlRef = useRef<string | null>(null)
 
   useEffect(() => {
     if (!sessionId) router.push('/')
+    return () => {
+      streamRef.current?.getTracks().forEach(t => t.stop())
+      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
+    }
   }, [sessionId, router])
 
   async function startRecording() {
@@ -35,12 +40,15 @@ function MicCheckContent() {
       }
       recorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
+        if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current)
         const url = URL.createObjectURL(blob)
+        objectUrlRef.current = url
         const audio = new Audio(url)
         audioRef.current = audio
-        audio.onended = () => setState('done')
+        audio.onended = () => { URL.revokeObjectURL(url); objectUrlRef.current = null; setState('done') }
+        audio.onerror = () => { URL.revokeObjectURL(url); objectUrlRef.current = null; setState('done') }
         setState('playing')
-        audio.play()
+        audio.play().catch(() => { URL.revokeObjectURL(url); objectUrlRef.current = null; setState('done') })
       }
 
       setState('recording')

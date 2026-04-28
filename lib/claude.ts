@@ -1,11 +1,11 @@
-import Groq from 'groq-sdk'
+import OpenAI from 'openai'
 import type { TranscriptEntry, RubricResult } from '@/types'
 import { INTERVIEWER_SYSTEM, EVALUATOR_SYSTEM } from './prompts'
 
-const client = new Groq({ apiKey: process.env.GROQ_API_KEY })
+const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
-const INTERVIEWER_MODEL = 'llama-3.3-70b-versatile'
-const EVALUATOR_MODEL = 'llama-3.3-70b-versatile'
+const INTERVIEWER_MODEL = 'gpt-4o-mini'
+const EVALUATOR_MODEL = 'gpt-4o-mini'
 
 export interface InterviewerResponse {
   utterance: string
@@ -14,7 +14,7 @@ export interface InterviewerResponse {
   isComplete: boolean
 }
 
-const SPEAK_TOOL: Groq.Chat.ChatCompletionTool = {
+const SPEAK_TOOL: OpenAI.Chat.ChatCompletionTool = {
   type: 'function',
   function: {
     name: 'speak',
@@ -49,7 +49,7 @@ const SPEAK_TOOL: Groq.Chat.ChatCompletionTool = {
 export async function getInterviewerResponse(
   transcript: TranscriptEntry[]
 ): Promise<InterviewerResponse> {
-  const messages: Groq.Chat.ChatCompletionMessageParam[] = [
+  const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
     { role: 'user', content: "Let's begin the interview." },
   ]
 
@@ -60,59 +60,38 @@ export async function getInterviewerResponse(
     })
   }
 
-  let response
-  try {
-    response = await client.chat.completions.create({
-      model: INTERVIEWER_MODEL,
-      max_tokens: 400,
-      messages: [{ role: 'system', content: INTERVIEWER_SYSTEM }, ...messages],
-      tools: [SPEAK_TOOL],
-      tool_choice: 'required',
-    })
-  } catch (err: unknown) {
-    // Llama sometimes misspells the tool name (e.g. "spreak") causing a Groq 400.
-    // The failed_generation still contains valid JSON — salvage it directly.
-    const failedGen = (err as { error?: { error?: { failed_generation?: string } } })
-      ?.error?.error?.failed_generation
-    if (failedGen) {
-      const salvaged = salvageInterviewerResponse(failedGen)
-      if (salvaged) return salvaged
-    }
-    throw err
-  }
+  const response = await client.chat.completions.create({
+    model: INTERVIEWER_MODEL,
+    max_tokens: 400,
+    messages: [{ role: 'system', content: INTERVIEWER_SYSTEM }, ...messages],
+    tools: [SPEAK_TOOL],
+    tool_choice: 'required',
+  })
 
-  const toolCall = response.choices[0].message.tool_calls?.[0]
+  const choice = response.choices?.[0]
+  const toolCall = choice?.message?.tool_calls?.[0]
   if (!toolCall) throw new Error('No tool call from interviewer')
 
-  const args = JSON.parse(toolCall.function.arguments)
-  return {
-    utterance: args.utterance,
-    currentQuestionIndex: args.current_question_index,
-    utteranceType: args.utterance_type,
-    isComplete: args.is_complete,
-  }
-}
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const fn = (toolCall as any).function as { arguments: string } | undefined
+  if (!fn?.arguments) throw new Error('Interviewer tool call missing function arguments')
 
-function salvageInterviewerResponse(failedGen: string): InterviewerResponse | null {
+  let args: Record<string, unknown>
   try {
-    // Model sometimes misspells/mis-formats the function wrapper ("spreak", "Speak",
-    // missing ">", extra "}}", etc.). Use the balanced extractor for robust parsing.
-    const jsonStr = extractJsonObject(failedGen)
-    if (!jsonStr) return null
-    const args = JSON.parse(jsonStr)
-    if (!args.utterance) return null
-    return {
-      utterance: args.utterance,
-      currentQuestionIndex: args.current_question_index ?? 1,
-      utteranceType: args.utterance_type ?? 'asking_question',
-      isComplete: args.is_complete ?? false,
-    }
+    args = JSON.parse(fn.arguments)
   } catch {
-    return null
+    throw new Error('Interviewer tool call had invalid JSON')
+  }
+  if (!args.utterance) throw new Error('Interviewer response missing utterance')
+  return {
+    utterance: args.utterance as string,
+    currentQuestionIndex: (args.current_question_index as number) ?? 1,
+    utteranceType: (args.utterance_type as string) ?? 'asking_question',
+    isComplete: Boolean(args.is_complete),
   }
 }
 
-const EVALUATE_TOOL: Groq.Chat.ChatCompletionTool = {
+const EVALUATE_TOOL: OpenAI.Chat.ChatCompletionTool = {
   type: 'function',
   function: {
     name: 'submit_evaluation',
@@ -189,39 +168,6 @@ function validateQuotes(rubric: RubricResult, transcript: TranscriptEntry[]): bo
   return true
 }
 
-// Walks the string character-by-character to find the first balanced {...} object.
-// Handles strings with escaped characters and correctly ignores braces inside
-// string values. More robust than a greedy regex that matches to the last `}`.
-function extractJsonObject(str: string): string | null {
-  const start = str.indexOf('{')
-  if (start === -1) return null
-  let depth = 0
-  let inString = false
-  let escaped = false
-  for (let i = start; i < str.length; i++) {
-    const ch = str[i]
-    if (escaped)             { escaped = false; continue }
-    if (ch === '\\' && inString) { escaped = true; continue }
-    if (ch === '"')          { inString = !inString; continue }
-    if (inString)            continue
-    if (ch === '{')          depth++
-    else if (ch === '}')     { depth--; if (depth === 0) return str.slice(start, i + 1) }
-  }
-  return null
-}
-
-function salvageRubric(failedGen: string): RubricResult | null {
-  try {
-    const jsonStr = extractJsonObject(failedGen)
-    if (!jsonStr) return null
-    // Remove trailing duplicate empty object keys, e.g. `,"dimensions":{}` before final `}`
-    const fixed = jsonStr.replace(/,\s*"(\w+)"\s*:\s*\{\s*\}(?=\s*\})/g, '')
-    return JSON.parse(fixed) as RubricResult
-  } catch {
-    return null
-  }
-}
-
 export async function evaluateInterview(
   transcript: TranscriptEntry[],
   candidateName: string,
@@ -236,7 +182,7 @@ Full transcript:
 ${transcriptText}`
 
   async function runEval(retryNote?: string): Promise<RubricResult> {
-    const messages: Groq.Chat.ChatCompletionMessageParam[] = [
+    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
       { role: 'user', content: userMessage },
     ]
     if (retryNote) {
@@ -246,32 +192,22 @@ ${transcriptText}`
       })
     }
 
-    let response
-    try {
-      response = await client.chat.completions.create({
-        model: EVALUATOR_MODEL,
-        max_tokens: 2000,
-        messages: [{ role: 'system', content: EVALUATOR_SYSTEM }, ...messages],
-        tools: [EVALUATE_TOOL],
-        tool_choice: 'required',
-      })
-    } catch (err: unknown) {
-      // Llama 3 sometimes emits duplicate JSON keys (e.g. "dimensions" twice),
-      // causing Groq's schema validator to reject with 400. If the error includes
-      // failed_generation we can salvage the rubric from the raw output.
-      const failedGen = (err as { error?: { error?: { failed_generation?: string } } })
-        ?.error?.error?.failed_generation
-      if (failedGen) {
-        const salvaged = salvageRubric(failedGen)
-        if (salvaged) return salvaged
-      }
-      throw err
-    }
+    const response = await client.chat.completions.create({
+      model: EVALUATOR_MODEL,
+      max_tokens: 2000,
+      messages: [{ role: 'system', content: EVALUATOR_SYSTEM }, ...messages],
+      tools: [EVALUATE_TOOL],
+      tool_choice: 'required',
+    })
 
-    const toolCall = response.choices[0].message.tool_calls?.[0]
+    const toolCall = response.choices?.[0]?.message?.tool_calls?.[0]
     if (!toolCall) throw new Error('No tool call from evaluator')
 
-    return JSON.parse(toolCall.function.arguments) as RubricResult
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const fnArgs = ((toolCall as any).function as { arguments: string } | undefined)?.arguments
+    if (!fnArgs) throw new Error('Evaluator tool call missing function arguments')
+
+    return JSON.parse(fnArgs) as RubricResult
   }
 
   let rubric = await runEval()

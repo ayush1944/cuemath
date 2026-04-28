@@ -20,8 +20,10 @@ export async function POST(request: Request) {
     }
 
     if (!session.focus_events) session.focus_events = []
-    session.focus_events.push({ event, timestamp, hidden_duration_ms })
-    await saveSession(session)
+    if (session.focus_events.length < 200) {
+      session.focus_events.push({ event, timestamp, hidden_duration_ms })
+      await saveSession(session)
+    }
 
     return NextResponse.json({ ok: true })
   } catch (e) {

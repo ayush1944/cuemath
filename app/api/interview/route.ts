@@ -5,9 +5,15 @@ import type { TranscriptEntry } from '@/types'
 
 export async function POST(request: Request) {
   try {
-    const { sessionId, transcript } = await request.json() as {
-      sessionId: string
-      transcript: TranscriptEntry[]
+    const body = await request.json()
+    const sessionId: string = body?.sessionId
+    const transcript: TranscriptEntry[] = body?.transcript
+
+    if (!sessionId || typeof sessionId !== 'string') {
+      return NextResponse.json({ error: 'Invalid sessionId' }, { status: 400 })
+    }
+    if (!Array.isArray(transcript)) {
+      return NextResponse.json({ error: 'Invalid transcript' }, { status: 400 })
     }
 
     const { utterance, currentQuestionIndex, utteranceType, isComplete } =
