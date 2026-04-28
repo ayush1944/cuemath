@@ -274,15 +274,15 @@ function InterviewContent() {
       const res = await fetch('/api/interview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId, transcript: updatedTranscript, currentQuestion: questionRef.current }),
+        body: JSON.stringify({ sessionId, transcript: updatedTranscript }),
       })
       if (!res.ok) throw new Error(`Interview API ${res.status}`)
-      const { text, isComplete } = await res.json()
+      const { utterance, currentQuestionIndex, isComplete } = await res.json()
 
-      setTranscript(prev => [...prev, { role: 'ai', content: text, timestamp: new Date().toISOString(), questionNumber: questionRef.current }])
+      setTranscript(prev => [...prev, { role: 'ai', content: utterance, timestamp: new Date().toISOString(), questionNumber: currentQuestionIndex }])
 
       if (isComplete) {
-        await speakText(text)
+        await speakText(utterance)
         setState('evaluating')
         const evalRes = await fetch('/api/evaluate', {
           method: 'POST',
@@ -294,11 +294,8 @@ function InterviewContent() {
         return
       }
 
-      setCurrentQuestion(() => {
-        const aiTurns = updatedTranscript.filter(e => e.role === 'ai').length + 1
-        return Math.min(Math.ceil(aiTurns / 1.8), 5)
-      })
-      await speakText(text)
+      setCurrentQuestion(currentQuestionIndex)
+      await speakText(utterance)
       startListeningRef.current()
     } catch {
       setErrorMsg('Connection error. Please refresh and try again.')

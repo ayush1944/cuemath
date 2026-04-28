@@ -26,6 +26,12 @@ export interface RubricResult {
   validated: boolean
 }
 
+export interface FocusEvent {
+  event: 'tab_hidden' | 'tab_visible'
+  timestamp: number
+  hidden_duration_ms?: number
+}
+
 export interface Session {
   id: string
   candidateName: string
@@ -36,4 +42,7 @@ export interface Session {
   status: 'in_progress' | 'completed' | 'abandoned'
   transcript: TranscriptEntry[]
   rubric?: RubricResult
+  currentQuestionIndex?: number
+  lastUtteranceType?: string
+  focus_events?: FocusEvent[]
 }

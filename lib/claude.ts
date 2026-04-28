@@ -7,14 +7,48 @@ const client = new Groq({ apiKey: process.env.GROQ_API_KEY })
 const INTERVIEWER_MODEL = 'llama-3.3-70b-versatile'
 const EVALUATOR_MODEL = 'llama-3.3-70b-versatile'
 
-export async function getInterviewerResponse(
-  transcript: TranscriptEntry[],
-  currentQuestion: number
-): Promise<string> {
-  const system =
-    INTERVIEWER_SYSTEM +
-    `\n\n[Currently on question ${currentQuestion} of 5. Awaiting follow-up decision or next question.]`
+export interface InterviewerResponse {
+  utterance: string
+  currentQuestionIndex: number
+  utteranceType: string
+  isComplete: boolean
+}
 
+const SPEAK_TOOL: Groq.Chat.ChatCompletionTool = {
+  type: 'function',
+  function: {
+    name: 'speak',
+    description: 'Speak the next thing to the candidate, with state metadata about where we are in the interview.',
+    parameters: {
+      type: 'object',
+      required: ['utterance', 'current_question_index', 'utterance_type', 'is_complete'],
+      properties: {
+        utterance: {
+          type: 'string',
+          description: 'The text to speak to the candidate. 1-3 sentences max. No markdown, no stage directions.',
+        },
+        current_question_index: {
+          type: 'integer',
+          minimum: 1,
+          maximum: 5,
+          description: 'Which of the 5 questions the candidate is currently working on. Does not change for follow-ups, clarification requests, or redirects on the same question.',
+        },
+        utterance_type: {
+          type: 'string',
+          enum: ['asking_question', 'follow_up', 'redirect', 'clarification_request', 'transition', 'closing'],
+        },
+        is_complete: {
+          type: 'boolean',
+          description: 'True only in the closing utterance after the candidate has answered question 5.',
+        },
+      },
+    },
+  },
+}
+
+export async function getInterviewerResponse(
+  transcript: TranscriptEntry[]
+): Promise<InterviewerResponse> {
   const messages: Groq.Chat.ChatCompletionMessageParam[] = [
     { role: 'user', content: "Let's begin the interview." },
   ]
@@ -29,10 +63,21 @@ export async function getInterviewerResponse(
   const response = await client.chat.completions.create({
     model: INTERVIEWER_MODEL,
     max_tokens: 400,
-    messages: [{ role: 'system', content: system }, ...messages],
+    messages: [{ role: 'system', content: INTERVIEWER_SYSTEM }, ...messages],
+    tools: [SPEAK_TOOL],
+    tool_choice: 'required',
   })
 
-  return response.choices[0].message.content ?? ''
+  const toolCall = response.choices[0].message.tool_calls?.[0]
+  if (!toolCall) throw new Error('No tool call from interviewer')
+
+  const args = JSON.parse(toolCall.function.arguments)
+  return {
+    utterance: args.utterance,
+    currentQuestionIndex: args.current_question_index,
+    utteranceType: args.utterance_type,
+    isComplete: args.is_complete,
+  }
 }
 
 const EVALUATE_TOOL: Groq.Chat.ChatCompletionTool = {
