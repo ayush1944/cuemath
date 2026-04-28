@@ -60,13 +60,26 @@ export async function getInterviewerResponse(
     })
   }
 
-  const response = await client.chat.completions.create({
-    model: INTERVIEWER_MODEL,
-    max_tokens: 400,
-    messages: [{ role: 'system', content: INTERVIEWER_SYSTEM }, ...messages],
-    tools: [SPEAK_TOOL],
-    tool_choice: 'required',
-  })
+  let response
+  try {
+    response = await client.chat.completions.create({
+      model: INTERVIEWER_MODEL,
+      max_tokens: 400,
+      messages: [{ role: 'system', content: INTERVIEWER_SYSTEM }, ...messages],
+      tools: [SPEAK_TOOL],
+      tool_choice: 'required',
+    })
+  } catch (err: unknown) {
+    // Llama sometimes misspells the tool name (e.g. "spreak") causing a Groq 400.
+    // The failed_generation still contains valid JSON — salvage it directly.
+    const failedGen = (err as { error?: { error?: { failed_generation?: string } } })
+      ?.error?.error?.failed_generation
+    if (failedGen) {
+      const salvaged = salvageInterviewerResponse(failedGen)
+      if (salvaged) return salvaged
+    }
+    throw err
+  }
 
   const toolCall = response.choices[0].message.tool_calls?.[0]
   if (!toolCall) throw new Error('No tool call from interviewer')
@@ -77,6 +90,23 @@ export async function getInterviewerResponse(
     currentQuestionIndex: args.current_question_index,
     utteranceType: args.utterance_type,
     isComplete: args.is_complete,
+  }
+}
+
+function salvageInterviewerResponse(failedGen: string): InterviewerResponse | null {
+  try {
+    const match = failedGen.match(/<function=\w+>([\s\S]+)<\/function>/)
+    const jsonStr = match ? match[1] : failedGen
+    const args = JSON.parse(jsonStr)
+    if (!args.utterance) return null
+    return {
+      utterance: args.utterance,
+      currentQuestionIndex: args.current_question_index ?? 1,
+      utteranceType: args.utterance_type ?? 'asking_question',
+      isComplete: args.is_complete ?? false,
+    }
+  } catch {
+    return null
   }
 }
 
