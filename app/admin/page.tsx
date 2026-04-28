@@ -134,6 +134,11 @@ export default function AdminPage() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
+                    {(s.focus_events ?? []).filter(e => e.event === 'tab_hidden').length > 2 && (
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                        ⚠ Tab switches
+                      </span>
+                    )}
                     {s.rubric && !s.rubric.validated && (
                       <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-50 text-yellow-700 border border-yellow-200">
                         Quote unvalidated

@@ -75,6 +75,26 @@ export default async function AdminSessionPage({
           </div>
         </div>
 
+        {/* Tab-switch log — only shown for completed sessions with at least 1 switch */}
+        {session.status === 'completed' && (() => {
+          const events = session.focus_events ?? []
+          const switchCount = events.filter(e => e.event === 'tab_hidden').length
+          if (switchCount === 0) return null
+          const totalMs = events
+            .filter(e => e.event === 'tab_visible')
+            .reduce((sum, e) => sum + (e.hidden_duration_ms ?? 0), 0)
+          const totalSecs = Math.round(totalMs / 1000)
+          return (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6 flex items-center gap-3">
+              <span className="text-amber-500 text-base">⚠</span>
+              <p className="text-sm text-amber-800">
+                <strong>Tab switches during interview:</strong>{' '}
+                {switchCount}{totalSecs > 0 ? ` (${totalSecs}s total hidden)` : ''}
+              </p>
+            </div>
+          )
+        })()}
+
         {/* Rubric */}
         {session.rubric ? (
           <div className="space-y-4 mb-6">

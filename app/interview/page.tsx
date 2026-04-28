@@ -102,6 +102,7 @@ function InterviewContent() {
   const [micDevices, setMicDevices]     = useState<MediaDeviceInfo[]>([])
   const [countdown, setCountdown]       = useState<number | null>(null)
   const [showEndConfirm, setShowEndConfirm] = useState(false)
+  const [focusWarning, setFocusWarning] = useState(false)
 
   const streamRef          = useRef<MediaStream | null>(null)
   const recorderRef        = useRef<MediaRecorder | null>(null)
@@ -141,6 +142,44 @@ function InterviewContent() {
       .then(devs => setMicDevices(devs.filter(d => d.kind === 'audioinput')))
       .catch(() => {})
   }, [])
+
+  /* ── Tab-switch detection ── */
+  useEffect(() => {
+    if (!sessionId) return
+    let switchCount = 0
+    let lastHiddenAt: number | null = null
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        switchCount++
+        lastHiddenAt = Date.now()
+        fetch('/api/session/log-event', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId, event: 'tab_hidden', timestamp: lastHiddenAt }),
+        }).catch(() => {})
+      } else if (document.visibilityState === 'visible' && lastHiddenAt !== null) {
+        const durationMs = Date.now() - lastHiddenAt
+        fetch('/api/session/log-event', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId, event: 'tab_visible', timestamp: Date.now(), hidden_duration_ms: durationMs }),
+        }).catch(() => {})
+        if (switchCount === 1) setFocusWarning(true)
+        lastHiddenAt = null
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [sessionId])
+
+  /* ── Auto-dismiss focus warning after 3 s ── */
+  useEffect(() => {
+    if (!focusWarning) return
+    const t = setTimeout(() => setFocusWarning(false), 3000)
+    return () => clearTimeout(t)
+  }, [focusWarning])
 
   /* ── Stop recording ── */
   const stopRecording = useCallback(() => {
@@ -622,6 +661,19 @@ function InterviewContent() {
           </div>
         </div>
       </div>
+
+      {/* ── Focus warning toast (first tab switch only) ── */}
+      {focusWarning && (
+        <div style={{
+          position: 'fixed', top: 20, left: '50%', transform: 'translateX(-50%)',
+          zIndex: 100, background: '#1e293b', color: '#fff',
+          padding: '10px 20px', borderRadius: 99, fontSize: 13, fontWeight: 500,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.3)', whiteSpace: 'nowrap',
+          animation: 'fade-in-up 0.2s ease',
+        }}>
+          Please stay focused on the interview.
+        </div>
+      )}
 
       {/* ── End interview confirmation modal ── */}
       {showEndConfirm && (
