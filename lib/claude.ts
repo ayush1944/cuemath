@@ -95,11 +95,11 @@ export async function getInterviewerResponse(
 
 function salvageInterviewerResponse(failedGen: string): InterviewerResponse | null {
   try {
-    // Model sometimes misspells or mis-formats the function wrapper (e.g. "spreak",
-    // "Speak", missing ">"). Extract the JSON object directly — it's always valid.
-    const jsonMatch = failedGen.match(/\{[\s\S]+\}/)
-    if (!jsonMatch) return null
-    const args = JSON.parse(jsonMatch[0])
+    // Model sometimes misspells/mis-formats the function wrapper ("spreak", "Speak",
+    // missing ">", extra "}}", etc.). Use the balanced extractor for robust parsing.
+    const jsonStr = extractJsonObject(failedGen)
+    if (!jsonStr) return null
+    const args = JSON.parse(jsonStr)
     if (!args.utterance) return null
     return {
       utterance: args.utterance,
@@ -189,16 +189,33 @@ function validateQuotes(rubric: RubricResult, transcript: TranscriptEntry[]): bo
   return true
 }
 
-// Llama 3 sometimes emits duplicate JSON keys which Groq rejects with 400.
-// This extracts the rubric from the raw failed_generation string by removing
-// any trailing empty duplicate keys before parsing.
+// Walks the string character-by-character to find the first balanced {...} object.
+// Handles strings with escaped characters and correctly ignores braces inside
+// string values. More robust than a greedy regex that matches to the last `}`.
+function extractJsonObject(str: string): string | null {
+  const start = str.indexOf('{')
+  if (start === -1) return null
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let i = start; i < str.length; i++) {
+    const ch = str[i]
+    if (escaped)             { escaped = false; continue }
+    if (ch === '\\' && inString) { escaped = true; continue }
+    if (ch === '"')          { inString = !inString; continue }
+    if (inString)            continue
+    if (ch === '{')          depth++
+    else if (ch === '}')     { depth--; if (depth === 0) return str.slice(start, i + 1) }
+  }
+  return null
+}
+
 function salvageRubric(failedGen: string): RubricResult | null {
   try {
-    // Extract the JSON object directly — robust to wrapper format variations
-    const jsonMatch = failedGen.match(/\{[\s\S]+\}/)
-    if (!jsonMatch) return null
+    const jsonStr = extractJsonObject(failedGen)
+    if (!jsonStr) return null
     // Remove trailing duplicate empty object keys, e.g. `,"dimensions":{}` before final `}`
-    const fixed = jsonMatch[0].replace(/,\s*"(\w+)"\s*:\s*\{\s*\}(?=\s*\})/g, '')
+    const fixed = jsonStr.replace(/,\s*"(\w+)"\s*:\s*\{\s*\}(?=\s*\})/g, '')
     return JSON.parse(fixed) as RubricResult
   } catch {
     return null
