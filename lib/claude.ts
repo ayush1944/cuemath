@@ -95,9 +95,11 @@ export async function getInterviewerResponse(
 
 function salvageInterviewerResponse(failedGen: string): InterviewerResponse | null {
   try {
-    const match = failedGen.match(/<function=\w+>([\s\S]+)<\/function>/)
-    const jsonStr = match ? match[1] : failedGen
-    const args = JSON.parse(jsonStr)
+    // Model sometimes misspells or mis-formats the function wrapper (e.g. "spreak",
+    // "Speak", missing ">"). Extract the JSON object directly — it's always valid.
+    const jsonMatch = failedGen.match(/\{[\s\S]+\}/)
+    if (!jsonMatch) return null
+    const args = JSON.parse(jsonMatch[0])
     if (!args.utterance) return null
     return {
       utterance: args.utterance,
@@ -192,13 +194,11 @@ function validateQuotes(rubric: RubricResult, transcript: TranscriptEntry[]): bo
 // any trailing empty duplicate keys before parsing.
 function salvageRubric(failedGen: string): RubricResult | null {
   try {
-    // Strip <function=submit_evaluation>...</function> wrapper
-    const match = failedGen.match(/<function=\w+>([\s\S]+)<\/function>/)
-    const jsonStr = match ? match[1] : failedGen
-
+    // Extract the JSON object directly — robust to wrapper format variations
+    const jsonMatch = failedGen.match(/\{[\s\S]+\}/)
+    if (!jsonMatch) return null
     // Remove trailing duplicate empty object keys, e.g. `,"dimensions":{}` before final `}`
-    const fixed = jsonStr.replace(/,\s*"(\w+)"\s*:\s*\{\s*\}(?=\s*\})/g, '')
-
+    const fixed = jsonMatch[0].replace(/,\s*"(\w+)"\s*:\s*\{\s*\}(?=\s*\})/g, '')
     return JSON.parse(fixed) as RubricResult
   } catch {
     return null
