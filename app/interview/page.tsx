@@ -710,7 +710,7 @@ function InterviewContent() {
       </div>
 
       {/* ── Fullscreen exit banner ── */}
-      {fullscreenExited && state !== 'ready' && state !== 'evaluating' && state !== 'error' && (
+      {fullscreenExited && state !== 'evaluating' && state !== 'error' && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, zIndex: 200,
           background: '#1e293b', color: '#fff',

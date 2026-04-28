@@ -8,7 +8,16 @@
       "Bash(npx tsc *)",
       "Bash(npm run *)",
       "Bash(npm ls *)",
-      "Bash(npm uninstall *)"
+      "Bash(npm uninstall *)",
+      "Bash(npx vercel *)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'fix: remove stale ANTHROPIC_API_KEY from env example *)",
+      "Bash(git push *)",
+      "Bash(git checkout *)",
+      "Bash(git commit -m 'fix\\(progress-bar\\): make backend authoritative via speak tool use *)",
+      "Bash(git commit -m 'feat\\(report\\): replace score dots with horizontal bar chart *)",
+      "Bash(git commit -m 'fix\\(interview\\): salvage speak tool response when model misspells tool name *)",
+      "Bash(git commit -m 'fix\\(interview\\): robust JSON extraction in salvage functions *)"
     ]
   }
 }
