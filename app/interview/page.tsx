@@ -224,12 +224,14 @@ function InterviewContent() {
         await new Promise<void>(resolve => {
           const utter = new SpeechSynthesisUtterance(ttsText)
           utter.rate = 0.95
-          utter.onend = () => resolve()
-          utter.onerror = () => resolve()
+          // 15 s safety timeout — browser TTS can hang if speech service is unavailable
+          const timeout = setTimeout(resolve, 15000)
+          utter.onend  = () => { clearTimeout(timeout); resolve() }
+          utter.onerror = () => { clearTimeout(timeout); resolve() }
           speechSynthesis.speak(utter)
         })
       }
-    } catch { /* silent fail */ }
+    } catch (e) { console.error('TTS error:', e) }
   }, [])
 
   /* ── Start listening ── */
