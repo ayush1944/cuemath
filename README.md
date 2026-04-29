@@ -2,18 +2,24 @@
 
 An AI-powered first-round screening tool for Cuemath tutor candidates. Candidates complete a fully voice-driven interview with an AI interviewer, receive a structured rubric-based evaluation, and the hiring team reviews everything through a password-protected admin dashboard.
 
-Built for the **Cuemath AI Builder Challenge** (Problem 3 — Tutor Hiring Tool).
+Built for the **Cuemath AI Builder Challenge** — Problem 3: Tutor Hiring Tool.
 
 ---
 
-## What it does
+## Demo flow
 
-1. **Landing page** — Candidate enters their name, email, and current role
-2. **Mic check** — 3-second test recording with playback and retry
-3. **Voice interview** — 5 fixed questions delivered by an AI interviewer via text-to-speech; candidate answers by speaking; VAD (voice activity detection) auto-detects when they finish
-4. **Evaluation** — After question 5, the transcript is scored across 5 dimensions using a structured rubric with tool use
-5. **Candidate report** — Softened, candidate-facing results with score dots and a recommendation banner
-6. **Admin dashboard** — Password-gated list of all sessions with status badges, recommendation badges, full transcripts, and raw rubric JSON
+```
+Landing page → Mic check → Fullscreen interview → AI evaluation → Candidate report
+                                                              ↓
+                                                     Admin dashboard
+```
+
+1. **Landing** — Candidate enters name, email, and current role
+2. **Mic check** — 3-second test recording with instant playback and retry
+3. **Interview** — Fullscreen, voice-driven session: AI asks 5 questions, VAD detects when the candidate finishes speaking, responses are transcribed and fed back to the LLM
+4. **Evaluation** — After question 5, the full transcript is scored across 5 rubric dimensions using GPT-4o-mini tool calling
+5. **Candidate report** — Softened results page with scores, strengths, and growth areas
+6. **Admin dashboard** — Password-gated list of all sessions with full transcripts, rubric breakdowns, and session management
 
 ---
 
@@ -23,9 +29,9 @@ Built for the **Cuemath AI Builder Challenge** (Problem 3 — Tutor Hiring Tool)
 |---|---|
 | Framework | Next.js 16 (App Router) + TypeScript |
 | Styling | Tailwind CSS v4 |
-| LLM (interviewer + evaluator) | Groq — `llama-3.3-70b-versatile` |
-| Speech-to-text | Groq Whisper (`whisper-large-v3-turbo`) |
-| Text-to-speech | ElevenLabs (optional) with browser `SpeechSynthesis` fallback |
+| LLM — interviewer + evaluator | OpenAI `gpt-4o-mini` |
+| Speech-to-text | OpenAI Whisper `whisper-1` |
+| Text-to-speech | OpenAI TTS `tts-1` (browser `SpeechSynthesis` fallback) |
 | Session storage | Upstash Redis |
 | Deployment | Vercel |
 
@@ -33,16 +39,72 @@ Built for the **Cuemath AI Builder Challenge** (Problem 3 — Tutor Hiring Tool)
 
 ## Features
 
-- **Voice Activity Detection** — Automatically stops recording after 1.5 s of silence; 15 s max silence before auto-submit
-- **Follow-up logic** — Interviewer asks one follow-up if an answer is under 15 words, vague, or invites elaboration
-- **Structured evaluation** — 5 dimensions scored 1–5 (communication clarity, warmth, ability to simplify, patience, English fluency) via Groq tool use
-- **Quote validation** — Every evidence quote must be a verbatim substring of what the candidate said; retried once on failure; flagged `validated: false` if still invalid
+### Interview experience
+- **Fullscreen mode** — Interview launches in fullscreen on click; persistent banner prompts re-entry if the candidate exits
+- **Voice Activity Detection** — Automatically stops recording after 1.5 s of silence; 15 s max-silence auto-submit
+- **Echo cancellation** — `echoCancellation`, `noiseSuppression`, and `autoGainControl` applied to mic capture; prevents AI TTS bleed into transcription
+- **Garbage filter** — Whisper hallucinations (non-Latin text, "thank you for watching"-style phrases) are filtered server-side before reaching the LLM
+- **3-second countdown** — Visual countdown before the first question fires
 - **Mute toggle** — Disables mic track in-stream without restarting recording
-- **Audio device switching** — Select a different microphone mid-session from the audio settings panel
-- **3-second countdown** — Brief pre-interview window before the first question fires
-- **End confirmation modal** — Prevents accidental exits mid-interview
-- **LIVE indicator** — Green badge in the header while the interview is actively running
-- **Admin token auth** — All admin routes require `ADMIN_TOKEN`; token is never exposed to the browser beyond sessionStorage
+- **Audio device switching** — Select a different microphone mid-session from the collapsible audio panel
+- **Submit early** — Candidate can tap Send to submit their answer before VAD silence timeout
+
+### Integrity
+- **Tab-switch detection** — Every time the candidate switches tabs, the event is logged (timestamp + duration hidden) and shown in the admin detail view
+- **Focus warning toast** — First tab switch triggers a non-blocking toast reminder
+- **Fullscreen exit warning** — Persistent top bar prompts re-entry if fullscreen is exited mid-interview
+
+### AI interviewer
+- **5 structured questions** — Fixed question set targeting communication, warmth, and teaching ability
+- **Adaptive follow-ups** — Interviewer asks follow-ups, redirects, or clarification requests based on answer quality
+- **Tool-enforced responses** — LLM uses `tool_choice: "required"` so every response is structured JSON with utterance, question index, utterance type, and completion flag
+
+### Evaluation
+- **5-dimension rubric** — Communication clarity, warmth, ability to simplify, patience, English fluency; each scored 1–5
+- **Evidence quotes** — Every score is backed by a verbatim candidate quote; validated as a true substring of the transcript
+- **Quote retry** — If validation fails, evaluation is retried once with a correction note; flagged `validated: false` if still invalid
+- **Recommendation** — `advance` / `maybe` / `do_not_advance` with a written summary
+
+### Admin dashboard
+- **Session list** — All sessions with status, recommendation, tab-switch warning, and quote-validation flag
+- **Session detail** — Full transcript, rubric breakdown with score bars, strengths/concerns, and raw JSON
+- **Delete sessions** — Trash icon on each card + confirmation modal; permanently removes from Redis
+- **Token auth** — All admin routes require `ADMIN_TOKEN`; verified server-side on every request
+
+---
+
+## Project structure
+
+```
+app/
+  page.tsx                    # Landing page — name / email / role form
+  mic-check/page.tsx          # Mic check with 3 s recording + playback
+  interview/page.tsx          # Interview UI — fullscreen, orb, VAD, chat bubbles
+  report/[sessionId]/         # Candidate-facing rubric report
+  admin/
+    page.tsx                  # Session list (password-gated, client component)
+    [sessionId]/
+      page.tsx                # Session detail — transcript + rubric
+      DeleteButton.tsx        # Client delete button + confirmation modal
+
+  api/
+    sessions/route.ts         # POST create session · GET list (admin-only)
+    sessions/[id]/route.ts    # GET · PUT (whitelisted fields) · DELETE (admin-only)
+    interview/route.ts        # POST → GPT-4o-mini → persist AI turn
+    transcribe/route.ts       # POST audio → Whisper → filtered text
+    tts/route.ts              # POST text → OpenAI TTS → audio/mpeg
+    evaluate/route.ts         # POST → GPT-4o-mini tool call → save rubric
+    session/log-event/route.ts# POST tab-visibility events (capped at 200)
+
+lib/
+  claude.ts                   # getInterviewerResponse · evaluateInterview
+  prompts.ts                  # INTERVIEWER_SYSTEM · EVALUATOR_SYSTEM
+  redis.ts                    # getSession · saveSession · getAllSessionIds · deleteSession
+  groq.ts                     # Whisper transcription (OpenAI client)
+  elevenlabs.ts               # OpenAI TTS (replaces ElevenLabs)
+
+types/index.ts                # TranscriptEntry · RubricResult · Session · FocusEvent
+```
 
 ---
 
@@ -51,30 +113,33 @@ Built for the **Cuemath AI Builder Challenge** (Problem 3 — Tutor Hiring Tool)
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/<your-username>/cuemath-ai-screener.git
-cd cuemath-ai-screener
+git clone https://github.com/ayush1944/cuemath.git
+cd cuemath
 npm install
 ```
 
 ### 2. Environment variables
 
-Copy `.env.example` to `.env.local` and fill in the values:
+Create `.env.local` in the project root:
 
-```bash
-cp .env.example .env.local
+```env
+OPENAI_API_KEY=sk-...
+
+UPSTASH_REDIS_REST_URL=https://...
+UPSTASH_REDIS_REST_TOKEN=...
+
+ADMIN_TOKEN=your-secure-password
 ```
 
 | Variable | Required | Description |
 |---|---|---|
-| `GROQ_API_KEY` | ✅ | Groq API key — used for LLM and Whisper STT |
+| `OPENAI_API_KEY` | ✅ | Powers GPT-4o-mini (interviewer + evaluator) + Whisper STT + TTS |
 | `UPSTASH_REDIS_REST_URL` | ✅ | Upstash Redis REST endpoint |
 | `UPSTASH_REDIS_REST_TOKEN` | ✅ | Upstash Redis REST token |
-| `ADMIN_TOKEN` | ✅ | Password for the `/admin` dashboard — use something non-trivial |
-| `ELEVENLABS_API_KEY` | ❌ | Optional — falls back to browser TTS if not set |
-| `ELEVENLABS_VOICE_ID` | ❌ | Optional — only used if `ELEVENLABS_API_KEY` is set |
+| `ADMIN_TOKEN` | ✅ | Password for `/admin` — choose something non-trivial |
 
 Get free-tier credentials:
-- **Groq**: [console.groq.com](https://console.groq.com)
+- **OpenAI**: [platform.openai.com](https://platform.openai.com)
 - **Upstash Redis**: [console.upstash.com](https://console.upstash.com)
 
 ### 3. Run locally
@@ -87,74 +152,51 @@ Open [http://localhost:3000](http://localhost:3000).
 
 ---
 
-## Project structure
+## Deployment (Vercel)
 
-```
-app/
-  page.tsx                  # Landing page (name / email / role form)
-  mic-check/page.tsx        # 3-second mic check with playback
-  interview/page.tsx        # Main interview UI (VAD, orb, chat bubbles)
-  report/[sessionId]/       # Candidate-facing rubric report
-  admin/
-    page.tsx                # Session list (password-gated)
-    [sessionId]/page.tsx    # Full transcript + rubric detail
-
-  api/
-    sessions/route.ts       # POST create session, GET list (admin)
-    sessions/[id]/route.ts  # GET / PUT individual session
-    interview/route.ts      # POST → LLM → persist AI turn
-    transcribe/route.ts     # POST audio → Groq Whisper → text
-    tts/route.ts            # POST text → ElevenLabs or browser fallback
-    evaluate/route.ts       # POST → evaluateInterview → save rubric
-
-lib/
-  claude.ts                 # LLM calls: getInterviewerResponse, evaluateInterview
-  prompts.ts                # INTERVIEWER_SYSTEM, EVALUATOR_SYSTEM
-  redis.ts                  # getSession, saveSession, getAllSessionIds
-  groq.ts                   # Whisper transcription helper
-  elevenlabs.ts             # ElevenLabs TTS helper
-
-types/index.ts              # TranscriptEntry, RubricResult, Session
-```
-
----
-
-## Interview flow
-
-```
-Landing → Mic check → Interview (loading → countdown → ai_speaking ↔ listening → processing) → Evaluating → Report
-```
-
-The interviewer and evaluator both use `llama-3.3-70b-versatile` on Groq. The interviewer detects the `[INTERVIEW_COMPLETE]` token to trigger evaluation. The evaluator uses Groq's tool use API to return a structured JSON rubric.
+1. Push to GitHub (`.env.local` is already in `.gitignore`)
+2. Import the repo at [vercel.com/new](https://vercel.com/new)
+3. Add the four environment variables in **Project Settings → Environment Variables**
+4. Deploy — Next.js is auto-detected
 
 ---
 
 ## Admin dashboard
 
-Navigate to `/admin` and enter the `ADMIN_TOKEN` value. You'll see all sessions sorted by start time, with:
-- Status badge (In Progress / Completed / Abandoned)
-- Recommendation badge (Advance / Maybe / Do Not Advance)
-- "Quote unvalidated" warning if evidence quotes failed verbatim verification
-- Full transcript and expandable raw JSON on the detail page
+Navigate to `/admin` and enter your `ADMIN_TOKEN`. You'll see all sessions with:
+
+| Badge | Meaning |
+|---|---|
+| Completed / In Progress / Abandoned | Interview status |
+| Advance / Maybe / Do Not Advance | LLM recommendation |
+| ⚠ Tab switches | Candidate left the tab more than twice |
+| Quote unvalidated | Evidence quotes couldn't be verified as verbatim |
+
+Click any session to see the full transcript, per-dimension scores with score bars, strengths, concerns, and expandable raw JSON. Use the **Delete session** button to permanently remove a record.
 
 ---
 
-## Deployment (Vercel)
+## Interview rubric dimensions
 
-1. Push to GitHub (ensure `.env.local` is in `.gitignore` — it is)
-2. Import the repo on [vercel.com](https://vercel.com)
-3. Add the four required environment variables in Project Settings → Environment Variables
-4. Deploy — Next.js and the framework preset are auto-detected
+| Dimension | What's measured |
+|---|---|
+| Communication Clarity | Clear, structured, easy-to-follow explanations |
+| Warmth | Empathy, encouragement, positive tone toward students |
+| Ability to Simplify | Breaking down complex ideas for young learners |
+| Patience | Composure when students struggle or repeat mistakes |
+| English Fluency | Grammar, vocabulary, natural expression |
+
+Each dimension is scored 1–5 and backed by a verbatim quote from the candidate's answers.
 
 ---
 
-## Known limitations / what I'd improve
+## Known limitations
 
-- No rate limiting on API routes — acceptable for a screener demo, essential for production
-- No real-time audio streaming — full recording is sent to Whisper after VAD silence
-- No interruption handling — candidate can't cut the AI off mid-sentence
-- Mobile layout is functional but not optimised
-- Session cleanup / TTL not implemented in Redis
+- No rate limiting on API routes — acceptable for a screener, essential before public use
+- Full audio recording sent to Whisper after VAD silence — no real-time streaming
+- No interruption handling — candidate cannot cut the AI off mid-sentence
+- Mobile layout is functional but not optimised for small screens
+- No Redis TTL — old sessions accumulate; add `EX` on `redis.set` for production cleanup
 
 ---
 
