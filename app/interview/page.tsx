@@ -9,6 +9,7 @@ type InterviewState = 'ready' | 'loading' | 'ai_speaking' | 'listening' | 'proce
 const SILENCE_THRESHOLD = 0.015
 const SILENCE_DURATION_MS = 1500
 const MAX_SILENCE_MS = 15000
+const MAX_RECORDING_MS = 90000
 
 /* ── Orb ── */
 function Orb({ state, muted }: { state: InterviewState; muted: boolean }) {
@@ -270,7 +271,11 @@ function InterviewContent() {
       recorderRef.current = recorder
       recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data) }
 
+      // maxRecTimer is declared here so it's in scope for onstop's closure
+      let maxRecTimer: ReturnType<typeof setTimeout> | undefined
+
       recorder.onstop = async () => {
+        if (maxRecTimer) clearTimeout(maxRecTimer)
         if (chunksRef.current.length === 0) { runTurnRef.current(undefined); return }
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || 'audio/webm' })
         if (blob.size < 1000) { runTurnRef.current('[no response]'); return }
@@ -308,6 +313,9 @@ function InterviewContent() {
       maxSilenceTimerRef.current = setTimeout(() => {
         if (!hadSpeechRef.current) stopRecording()
       }, MAX_SILENCE_MS)
+
+      // Hard cap: stop after 90s so Whisper never gets a huge blob
+      maxRecTimer = setTimeout(() => stopRecording(), MAX_RECORDING_MS)
     } catch {
       setErrorMsg('Microphone not available. Please check permissions.')
       setState('error')
@@ -654,7 +662,9 @@ function InterviewContent() {
                     const deviceId = e.target.value
                     if (!deviceId) return
                     try {
-                      const newStream = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId } } })
+                      const newStream = await navigator.mediaDevices.getUserMedia({
+                        audio: { deviceId: { exact: deviceId }, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+                      })
                       streamRef.current?.getTracks().forEach(t => t.stop())
                       streamRef.current = newStream
                       audioCtxRef.current = null

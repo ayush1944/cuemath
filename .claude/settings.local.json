@@ -17,7 +17,8 @@
       "Bash(git commit -m 'fix\\(progress-bar\\): make backend authoritative via speak tool use *)",
       "Bash(git commit -m 'feat\\(report\\): replace score dots with horizontal bar chart *)",
       "Bash(git commit -m 'fix\\(interview\\): salvage speak tool response when model misspells tool name *)",
-      "Bash(git commit -m 'fix\\(interview\\): robust JSON extraction in salvage functions *)"
+      "Bash(git commit -m 'fix\\(interview\\): robust JSON extraction in salvage functions *)",
+      "Bash(node -e \"const p = require\\('/Users/Yapa/VS code/Projects/Cuemath/node_modules/next/package.json'\\); console.log\\(p.version\\)\")"
     ]
   }
 }

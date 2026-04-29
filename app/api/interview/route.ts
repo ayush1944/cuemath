@@ -16,10 +16,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Invalid transcript' }, { status: 400 })
     }
 
-    const { utterance, currentQuestionIndex, utteranceType, isComplete } =
-      await getInterviewerResponse(transcript)
+    // Run LLM call and Redis read in parallel to cut one round-trip from the latency chain
+    const [{ utterance, currentQuestionIndex, utteranceType, isComplete }, session] =
+      await Promise.all([getInterviewerResponse(transcript), getSession(sessionId)])
 
-    const session = await getSession(sessionId)
     if (session) {
       const aiEntry: TranscriptEntry = {
         role: 'ai',

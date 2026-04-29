@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { v4 as uuidv4 } from 'uuid'
-import { saveSession, getAllSessionIds, getSession } from '@/lib/redis'
+import { saveSession, getAllSessions } from '@/lib/redis'
 import type { Session } from '@/types'
 
 export async function POST(request: Request) {
@@ -37,11 +37,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const ids = await getAllSessionIds()
-    const sessions = await Promise.all(
-      ids.map((id) => getSession(id))
-    )
-    const valid = sessions.filter(Boolean) as Session[]
+    const valid = await getAllSessions()
     valid.sort(
       (a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
     )

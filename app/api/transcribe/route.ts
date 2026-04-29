@@ -9,13 +9,14 @@ function isGarbage(text: string): boolean {
   // More than 30% non-ASCII characters → likely hallucinated foreign text
   const nonAscii = (t.match(/[^\x00-\x7F]/g) ?? []).length
   if (nonAscii / t.length > 0.3) return true
-  // Whisper hallucination phrases it emits on silence
-  const hallucinations = [
-    'thank you', 'thanks for watching', 'please subscribe',
+  // Whisper hallucination substrings — specific enough they won't appear in real speech
+  // "thank you" is intentionally excluded: candidates say it legitimately
+  const lower = t.toLowerCase()
+  const hallucinationSubstrings = [
+    'thanks for watching', 'please subscribe', 'like and subscribe',
     'ご視聴', '请不吝', 'subtitles by', 'transcribed by',
   ]
-  const lower = t.toLowerCase()
-  if (hallucinations.some(h => lower.includes(h))) return true
+  if (hallucinationSubstrings.some(h => lower.includes(h))) return true
   return false
 }
 

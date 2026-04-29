@@ -1,202 +1,152 @@
 # Cuemath AI Tutor Screener
 
-An AI-powered first-round screening tool for Cuemath tutor candidates. Candidates complete a fully voice-driven interview with an AI interviewer, receive a structured rubric-based evaluation, and the hiring team reviews everything through a password-protected admin dashboard.
+> An AI-powered first-round screening interviewer for Cuemath tutor candidates.
+> Voice-based · 5 questions · structured rubric output · admin dashboard.
 
-Built for the **Cuemath AI Builder Challenge** — Problem 3: Tutor Hiring Tool.
+🔗 **Live demo:** https://cuemath-sage.vercel.app
+🎥 **Video walkthrough:** [your URL]
+📄 **Project write-up:** [your Google Doc URL]
 
 ---
 
-## Demo flow
+## What it does
 
-```
-Landing page → Mic check → Fullscreen interview → AI evaluation → Candidate report
-                                                              ↓
-                                                     Admin dashboard
-```
+Cuemath receives thousands of tutor applications. The first-round screen — "can this person actually explain things clearly, warmly, in English?" — is repetitive, expensive, and inconsistent when done by humans at scale.
 
-1. **Landing** — Candidate enters name, email, and current role
-2. **Mic check** — 3-second test recording with instant playback and retry
-3. **Interview** — Fullscreen, voice-driven session: AI asks 5 questions, VAD detects when the candidate finishes speaking, responses are transcribed and fed back to the LLM
-4. **Evaluation** — After question 5, the full transcript is scored across 5 rubric dimensions using GPT-4o-mini tool calling
-5. **Candidate report** — Softened results page with scores, strengths, and growth areas
-6. **Admin dashboard** — Password-gated list of all sessions with full transcripts, rubric breakdowns, and session management
+This tool replaces that screen with a voice-driven AI interview. A candidate visits a link, speaks their answers to 5 structured questions, and walks away with a results page. The hiring team opens a dashboard, sees every candidate scored across 5 rubric dimensions, with verbatim evidence quotes from the transcript, and makes a fast call: Advance / Maybe / Do Not Advance.
+
+No scheduling. No interviewer time. Consistent bar across every candidate.
 
 ---
 
 ## Tech stack
 
-| Layer | Choice |
-|---|---|
-| Framework | Next.js 16 (App Router) + TypeScript |
-| Styling | Tailwind CSS v4 |
-| LLM — interviewer + evaluator | OpenAI `gpt-4o-mini` |
-| Speech-to-text | OpenAI Whisper `whisper-1` |
-| Text-to-speech | OpenAI TTS `tts-1` (browser `SpeechSynthesis` fallback) |
-| Session storage | Upstash Redis |
-| Deployment | Vercel |
+Next.js 16 · TypeScript · Tailwind CSS v4 · OpenAI GPT-4o-mini · OpenAI Whisper · OpenAI TTS · Upstash Redis · Vercel
 
 ---
 
-## Features
-
-### Interview experience
-- **Fullscreen mode** — Interview launches in fullscreen on click; persistent banner prompts re-entry if the candidate exits
-- **Voice Activity Detection** — Automatically stops recording after 1.5 s of silence; 15 s max-silence auto-submit
-- **Echo cancellation** — `echoCancellation`, `noiseSuppression`, and `autoGainControl` applied to mic capture; prevents AI TTS bleed into transcription
-- **Garbage filter** — Whisper hallucinations (non-Latin text, "thank you for watching"-style phrases) are filtered server-side before reaching the LLM
-- **3-second countdown** — Visual countdown before the first question fires
-- **Mute toggle** — Disables mic track in-stream without restarting recording
-- **Audio device switching** — Select a different microphone mid-session from the collapsible audio panel
-- **Submit early** — Candidate can tap Send to submit their answer before VAD silence timeout
-
-### Integrity
-- **Tab-switch detection** — Every time the candidate switches tabs, the event is logged (timestamp + duration hidden) and shown in the admin detail view
-- **Focus warning toast** — First tab switch triggers a non-blocking toast reminder
-- **Fullscreen exit warning** — Persistent top bar prompts re-entry if fullscreen is exited mid-interview
-
-### AI interviewer
-- **5 structured questions** — Fixed question set targeting communication, warmth, and teaching ability
-- **Adaptive follow-ups** — Interviewer asks follow-ups, redirects, or clarification requests based on answer quality
-- **Tool-enforced responses** — LLM uses `tool_choice: "required"` so every response is structured JSON with utterance, question index, utterance type, and completion flag
-
-### Evaluation
-- **5-dimension rubric** — Communication clarity, warmth, ability to simplify, patience, English fluency; each scored 1–5
-- **Evidence quotes** — Every score is backed by a verbatim candidate quote; validated as a true substring of the transcript
-- **Quote retry** — If validation fails, evaluation is retried once with a correction note; flagged `validated: false` if still invalid
-- **Recommendation** — `advance` / `maybe` / `do_not_advance` with a written summary
-
-### Admin dashboard
-- **Session list** — All sessions with status, recommendation, tab-switch warning, and quote-validation flag
-- **Session detail** — Full transcript, rubric breakdown with score bars, strengths/concerns, and raw JSON
-- **Delete sessions** — Trash icon on each card + confirmation modal; permanently removes from Redis
-- **Token auth** — All admin routes require `ADMIN_TOKEN`; verified server-side on every request
-
----
-
-## Project structure
-
-```
-app/
-  page.tsx                    # Landing page — name / email / role form
-  mic-check/page.tsx          # Mic check with 3 s recording + playback
-  interview/page.tsx          # Interview UI — fullscreen, orb, VAD, chat bubbles
-  report/[sessionId]/         # Candidate-facing rubric report
-  admin/
-    page.tsx                  # Session list (password-gated, client component)
-    [sessionId]/
-      page.tsx                # Session detail — transcript + rubric
-      DeleteButton.tsx        # Client delete button + confirmation modal
-
-  api/
-    sessions/route.ts         # POST create session · GET list (admin-only)
-    sessions/[id]/route.ts    # GET · PUT (whitelisted fields) · DELETE (admin-only)
-    interview/route.ts        # POST → GPT-4o-mini → persist AI turn
-    transcribe/route.ts       # POST audio → Whisper → filtered text
-    tts/route.ts              # POST text → OpenAI TTS → audio/mpeg
-    evaluate/route.ts         # POST → GPT-4o-mini tool call → save rubric
-    session/log-event/route.ts# POST tab-visibility events (capped at 200)
-
-lib/
-  claude.ts                   # getInterviewerResponse · evaluateInterview
-  prompts.ts                  # INTERVIEWER_SYSTEM · EVALUATOR_SYSTEM
-  redis.ts                    # getSession · saveSession · getAllSessionIds · deleteSession
-  groq.ts                     # Whisper transcription (OpenAI client)
-  elevenlabs.ts               # OpenAI TTS (replaces ElevenLabs)
-
-types/index.ts                # TranscriptEntry · RubricResult · Session · FocusEvent
-```
-
----
-
-## Setup
-
-### 1. Clone and install
+## Run locally
 
 ```bash
 git clone https://github.com/ayush1944/cuemath.git
 cd cuemath
 npm install
-```
-
-### 2. Environment variables
-
-Create `.env.local` in the project root:
-
-```env
-OPENAI_API_KEY=sk-...
-
-UPSTASH_REDIS_REST_URL=https://...
-UPSTASH_REDIS_REST_TOKEN=...
-
-ADMIN_TOKEN=your-secure-password
-```
-
-| Variable | Required | Description |
-|---|---|---|
-| `OPENAI_API_KEY` | ✅ | Powers GPT-4o-mini (interviewer + evaluator) + Whisper STT + TTS |
-| `UPSTASH_REDIS_REST_URL` | ✅ | Upstash Redis REST endpoint |
-| `UPSTASH_REDIS_REST_TOKEN` | ✅ | Upstash Redis REST token |
-| `ADMIN_TOKEN` | ✅ | Password for `/admin` — choose something non-trivial |
-
-Get free-tier credentials:
-- **OpenAI**: [platform.openai.com](https://platform.openai.com)
-- **Upstash Redis**: [console.upstash.com](https://console.upstash.com)
-
-### 3. Run locally
-
-```bash
+cp .env.example .env.local
+# Fill in: OPENAI_API_KEY, UPSTASH_REDIS_REST_URL,
+#          UPSTASH_REDIS_REST_TOKEN, ADMIN_TOKEN
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+---
+
+## Architecture
+
+```
+Browser                          Server (Next.js API routes)         External
+───────                          ───────────────────────────         ────────
+Landing page
+  └─ POST /api/sessions ──────────────────────────────────────── Upstash Redis
+                                                                  (store session)
+Mic check
+  └─ getUserMedia()
+
+Interview page (fullscreen)
+  ├─ VAD detects silence
+  ├─ POST /api/transcribe ─────────────────────────────────────── OpenAI Whisper
+  │    └─ garbage filter (non-Latin, hallucination phrases)
+  ├─ POST /api/interview ──────────────────────────────────────── GPT-4o-mini
+  │    └─ tool_choice: required → structured JSON response         (interviewer)
+  └─ POST /api/tts ────────────────────────────────────────────── OpenAI TTS
+       └─ audio/mpeg → <Audio> playback
+
+After question 5:
+  POST /api/evaluate ──────────────────────────────────────────── GPT-4o-mini
+    └─ 5-dimension rubric + evidence quotes                        (evaluator)
+         └─ quote validation (verbatim substring check)
+              └─ retry once if invalid
+                   └─ save to Redis → redirect to /report
+
+Admin at /admin
+  └─ GET /api/sessions?token=... → all sessions
+  └─ DELETE /api/sessions/[id]?token=... → remove session
+```
+
+The interviewer and evaluator are separate LLM calls with separate system prompts. The interviewer uses `tool_choice: required` to enforce structured output (utterance, question index, utterance type, completion flag) on every turn — no free-form generation that could break the state machine.
+
+Echo cancellation (`echoCancellation: true, noiseSuppression: true, autoGainControl: true`) is applied to the mic stream so the AI's own TTS output doesn't bleed into the next recording. A 300ms gap is inserted between TTS end and mic start to absorb reverb. Whisper hallucinations (Japanese/Chinese YouTube phrases, "thanks for watching") are filtered server-side before reaching the LLM.
 
 ---
 
-## Deployment (Vercel)
+## Project write-up
 
-1. Push to GitHub (`.env.local` is already in `.gitignore`)
-2. Import the repo at [vercel.com/new](https://vercel.com/new)
-3. Add the four environment variables in **Project Settings → Environment Variables**
-4. Deploy — Next.js is auto-detected
+### 1. The problem
+
+Cuemath's tutor hiring funnel has a specific first-round problem: they need to know whether a candidate can explain things clearly, speak warm English, and show patience — before investing recruiter time in a real interview. That screen is currently done by humans at a high volume, with inevitable inconsistency in how different interviewers weight different qualities.
+
+The brief asked for an AI tool that could automate this screen. The constraint that made it interesting: the screen is inherently conversational. A form doesn't tell you if someone is warm. A written response doesn't tell you how they sound.
+
+### 2. The approach
+
+Voice-first. The candidate should feel like they're having a conversation, not filling out a form. That meant:
+
+- Text-to-speech for the AI's questions (not text on a screen)
+- Speech-to-text for the candidate's answers (not a text box)
+- Voice activity detection so the candidate doesn't have to press a button — they just... stop talking
+
+The 5 questions are fixed and sequenced: intro → teaching approach → handling a struggling student → explaining a concept simply → why Cuemath specifically. Each question has a rubric-relevant intent. The LLM interviewer can ask follow-ups, redirect vague answers, or request clarification — but it always advances after sufficient engagement.
+
+The evaluator is a separate LLM call that receives the full transcript after question 5 and scores it across 5 dimensions with verbatim evidence quotes. Every quote is validated as a true substring of what the candidate actually said — preventing hallucinated or paraphrased evidence.
+
+### 3. Technical decisions
+
+**OpenAI for everything.** The initial build used Groq (Llama 3.3) for the LLM and Whisper, with ElevenLabs for TTS. Llama's tool-calling was unreliable — it would misspell function names (`spreak` instead of `speak`), emit duplicate JSON keys, and require fragile salvage code. Switching to GPT-4o-mini eliminated all of that. OpenAI Whisper replaced Groq Whisper, and OpenAI TTS replaced ElevenLabs when the free-tier quota ran out. One API key, one dependency.
+
+**Tool use for structured output.** Both the interviewer and evaluator use `tool_choice: "required"` — the model must call a function on every turn. This enforces a strict schema and makes the state machine deterministic. No regex parsing of free-form text.
+
+**Fullscreen interview.** The browser Fullscreen API is called on the user gesture that starts the interview — the only moment browsers allow it. If the candidate exits fullscreen (Escape key), a persistent top banner prompts them to return. Combined with tab-switch logging (every hide/show event is timestamped and stored), the admin can see integrity signals alongside the rubric.
+
+**Echo cancellation.** Without `echoCancellation: true` in `getUserMedia`, the mic picks up the AI's TTS output through speakers. Whisper then transcribes it — often as Japanese or Chinese text (a known Whisper hallucination pattern on certain audio). A server-side garbage filter catches anything with >30% non-ASCII characters or known hallucination phrases as a second line of defence.
+
+**Upstash Redis.** Sessions are stored as JSON blobs under `session:{id}` with a set `sessions` tracking all IDs. Simple, serverless-compatible, and fast enough for a screener with no concurrent-write hotspots.
+
+### 4. Challenges
+
+**VAD reliability.** Getting the silence detection thresholds right took iteration. Too sensitive and it cuts off candidates mid-thought. Too loose and the interview hangs. The final values (RMS threshold 0.015, 1.5 s silence, 15 s max) work well for typical laptop/phone mic setups.
+
+**LLM tool-call reliability.** Llama 3.3 on Groq required three layers of salvage code to handle malformed tool calls. The switch to GPT-4o-mini removed that entirely. Sometimes the right fix is a better tool, not more defensive code.
+
+**Whisper hallucinations.** When the mic is quiet, Whisper doesn't return silence — it returns plausible-sounding text in whatever language its prior makes most likely. In some environments this manifested as Japanese subtitles. The fix was two-pronged: browser echo cancellation (prevent the audio source) and server-side filtering (catch anything that slips through).
+
+**Evaluation quote validation.** GPT-4o-mini occasionally paraphrases evidence quotes rather than quoting verbatim. The validator checks every quote as a case-insensitive substring of the transcript and triggers a single retry with a correction note. Quotes that still fail are flagged `validated: false` in the admin UI so reviewers know to weight the evidence less.
+
+### 5. Results
+
+A complete interview — 5 questions, natural follow-ups, full evaluation — runs in about 12–15 minutes end-to-end. The rubric output is consistent across sessions. The admin dashboard makes it easy to compare candidates side by side and spot integrity signals (tab switches, unvalidated quotes) without reading full transcripts unless needed.
+
+The candidate-facing report is intentionally softened: it shows scores and growth areas but doesn't display the raw `advance / do_not_advance` flag. Candidates leave with actionable feedback regardless of outcome.
+
+### 6. What's next
+
+- **Streaming transcription** — Send audio chunks in real time instead of waiting for VAD silence; reduces perceived latency
+- **Interruption handling** — Let the candidate cut the AI off mid-sentence
+- **Rate limiting** — Essential before any public rollout
+- **Session TTL** — Add Redis `EX` on session writes so old data doesn't accumulate indefinitely
+- **Mobile optimisation** — The interview UI is functional on mobile but not polished
+- **Custom question sets** — Allow hiring managers to configure questions per role from the admin panel
 
 ---
 
 ## Admin dashboard
 
-Navigate to `/admin` and enter your `ADMIN_TOKEN`. You'll see all sessions with:
+Navigate to `/admin` and enter your `ADMIN_TOKEN`. Every session shows:
 
-| Badge | Meaning |
+| Signal | Meaning |
 |---|---|
-| Completed / In Progress / Abandoned | Interview status |
 | Advance / Maybe / Do Not Advance | LLM recommendation |
-| ⚠ Tab switches | Candidate left the tab more than twice |
-| Quote unvalidated | Evidence quotes couldn't be verified as verbatim |
+| ⚠ Tab switches | Candidate left the tab more than twice during the interview |
+| Quote unvalidated | Evidence quotes couldn't be verified as verbatim substrings |
 
-Click any session to see the full transcript, per-dimension scores with score bars, strengths, concerns, and expandable raw JSON. Use the **Delete session** button to permanently remove a record.
-
----
-
-## Interview rubric dimensions
-
-| Dimension | What's measured |
-|---|---|
-| Communication Clarity | Clear, structured, easy-to-follow explanations |
-| Warmth | Empathy, encouragement, positive tone toward students |
-| Ability to Simplify | Breaking down complex ideas for young learners |
-| Patience | Composure when students struggle or repeat mistakes |
-| English Fluency | Grammar, vocabulary, natural expression |
-
-Each dimension is scored 1–5 and backed by a verbatim quote from the candidate's answers.
-
----
-
-## Known limitations
-
-- No rate limiting on API routes — acceptable for a screener, essential before public use
-- Full audio recording sent to Whisper after VAD silence — no real-time streaming
-- No interruption handling — candidate cannot cut the AI off mid-sentence
-- Mobile layout is functional but not optimised for small screens
-- No Redis TTL — old sessions accumulate; add `EX` on `redis.set` for production cleanup
+Click any session for the full transcript, per-dimension scores, strengths, concerns, and expandable raw JSON. The delete button (trash icon, hover to reveal) permanently removes a session after confirmation.
 
 ---
 
