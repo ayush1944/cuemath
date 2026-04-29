@@ -25,7 +25,6 @@ async function fetchSessionsFromApi(t: string): Promise<Session[] | null> {
 
 export default function AdminPage() {
   const [password, setPassword] = useState('')
-  // Initialize token and loading from sessionStorage so the effect body needs zero setState calls
   const [token, setToken] = useState(() =>
     typeof window !== 'undefined' ? sessionStorage.getItem('admin_token') ?? '' : ''
   )
@@ -34,8 +33,9 @@ export default function AdminPage() {
     typeof window !== 'undefined' ? !!sessionStorage.getItem('admin_token') : false
   )
   const [error, setError] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<Session | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
-  // Restore session on mount — all setState calls happen asynchronously in .then()
   useEffect(() => {
     const saved = sessionStorage.getItem('admin_token')
     if (!saved) return
@@ -70,6 +70,23 @@ export default function AdminPage() {
     sessionStorage.removeItem('admin_token')
     setToken('')
     setSessions([])
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      const res = await fetch(
+        `/api/sessions/${deleteTarget.id}?token=${encodeURIComponent(token)}`,
+        { method: 'DELETE' }
+      )
+      if (res.ok) {
+        setSessions(prev => prev.filter(s => s.id !== deleteTarget.id))
+        setDeleteTarget(null)
+      }
+    } finally {
+      setDeleting(false)
+    }
   }
 
   if (!token) {
@@ -123,44 +140,99 @@ export default function AdminPage() {
             const rec = s.rubric ? REC_BADGE[s.rubric.overall_recommendation] : null
             const status = STATUS_BADGE[s.status]
             return (
-              <Link key={s.id} href={`/admin/${s.id}?token=${encodeURIComponent(token)}`}
-                className="block bg-white rounded-xl border border-gray-100 p-5 hover:border-orange-200 transition">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-semibold text-gray-800">{s.candidateName}</p>
-                    <p className="text-sm text-gray-400">{s.candidateEmail} · {s.candidateRole || 'role not specified'}</p>
-                    <p className="text-xs text-gray-300 mt-0.5">
-                      {new Date(s.startedAt).toLocaleString()}
-                    </p>
+              <div key={s.id} className="relative group">
+                <Link href={`/admin/${s.id}?token=${encodeURIComponent(token)}`}
+                  className="block bg-white rounded-xl border border-gray-100 p-5 hover:border-orange-200 transition">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-semibold text-gray-800">{s.candidateName}</p>
+                      <p className="text-sm text-gray-400">{s.candidateEmail} · {s.candidateRole || 'role not specified'}</p>
+                      <p className="text-xs text-gray-300 mt-0.5">
+                        {new Date(s.startedAt).toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {(s.focus_events ?? []).filter(e => e.event === 'tab_hidden').length > 2 && (
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
+                          ⚠ Tab switches
+                        </span>
+                      )}
+                      {s.rubric && !s.rubric.validated && (
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-50 text-yellow-700 border border-yellow-200">
+                          Quote unvalidated
+                        </span>
+                      )}
+                      {rec && (
+                        <span className="px-3 py-1 rounded-full text-xs font-semibold"
+                          style={{ background: rec.bg, color: rec.color }}>
+                          {rec.label}
+                        </span>
+                      )}
+                      <span className="px-2 py-0.5 rounded-full text-xs font-medium border"
+                        style={{ color: status.color, borderColor: status.color + '44', background: status.color + '11' }}>
+                        {status.label}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {(s.focus_events ?? []).filter(e => e.event === 'tab_hidden').length > 2 && (
-                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
-                        ⚠ Tab switches
-                      </span>
-                    )}
-                    {s.rubric && !s.rubric.validated && (
-                      <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-50 text-yellow-700 border border-yellow-200">
-                        Quote unvalidated
-                      </span>
-                    )}
-                    {rec && (
-                      <span className="px-3 py-1 rounded-full text-xs font-semibold"
-                        style={{ background: rec.bg, color: rec.color }}>
-                        {rec.label}
-                      </span>
-                    )}
-                    <span className="px-2 py-0.5 rounded-full text-xs font-medium border"
-                      style={{ color: status.color, borderColor: status.color + '44', background: status.color + '11' }}>
-                      {status.label}
-                    </span>
-                  </div>
-                </div>
-              </Link>
+                </Link>
+
+                {/* Delete button — appears on hover */}
+                <button
+                  onClick={(e) => { e.preventDefault(); setDeleteTarget(s) }}
+                  title="Delete session"
+                  className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-red-50"
+                >
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+                  </svg>
+                </button>
+              </div>
             )
           })}
         </div>
       </div>
+
+      {/* Delete confirmation modal */}
+      {deleteTarget && (
+        <div
+          onClick={() => !deleting && setDeleteTarget(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)' }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            className="bg-white rounded-2xl p-8 max-w-sm w-full mx-4"
+            style={{ boxShadow: '0 24px 64px rgba(0,0,0,0.2)' }}
+          >
+            <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center mx-auto mb-4">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/>
+              </svg>
+            </div>
+            <h2 className="text-lg font-semibold text-gray-900 text-center mb-1">Delete session?</h2>
+            <p className="text-sm text-gray-500 text-center mb-6">
+              This will permanently delete <strong className="text-gray-700">{deleteTarget.candidateName}</strong>&apos;s interview session. This cannot be undone.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+                className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 transition disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-50 transition"
+                style={{ background: 'linear-gradient(135deg, #ef4444, #dc2626)' }}
+              >
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   )
 }

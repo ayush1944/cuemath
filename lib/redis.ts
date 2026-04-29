@@ -18,3 +18,8 @@ export async function saveSession(session: Session): Promise<void> {
 export async function getAllSessionIds(): Promise<string[]> {
   return redis.smembers('sessions')
 }
+
+export async function deleteSession(id: string): Promise<void> {
+  await redis.del(`session:${id}`)
+  await redis.srem('sessions', id)
+}

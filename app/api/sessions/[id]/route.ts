@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getSession, saveSession } from '@/lib/redis'
+import { getSession, saveSession, deleteSession } from '@/lib/redis'
 import type { Session } from '@/types'
 
 export async function GET(
@@ -10,6 +10,24 @@ export async function GET(
   const session = await getSession(id)
   if (!session) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   return NextResponse.json({ session })
+}
+
+export async function DELETE(
+  request: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params
+  const { searchParams } = new URL(request.url)
+  if (searchParams.get('token') !== process.env.ADMIN_TOKEN) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  try {
+    await deleteSession(id)
+    return NextResponse.json({ ok: true })
+  } catch (e) {
+    console.error('DELETE /api/sessions/[id]', e)
+    return NextResponse.json({ error: 'Internal error' }, { status: 500 })
+  }
 }
 
 export async function PUT(

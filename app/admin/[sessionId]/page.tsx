@@ -2,6 +2,7 @@ import { notFound } from 'next/navigation'
 import Link from 'next/link'
 import { getSession } from '@/lib/redis'
 import type { DimensionScore } from '@/types'
+import DeleteButton from './DeleteButton'
 
 const DIMENSION_LABELS: Record<string, string> = {
   communication_clarity: 'Communication Clarity',
@@ -73,9 +74,12 @@ export default async function AdminSessionPage({
     <main className="min-h-screen px-4 py-10" style={{ background: '#FAFAF8' }}>
       <div className="max-w-3xl mx-auto">
 
-        <Link href={backUrl} className="text-sm text-gray-400 hover:text-gray-600 mb-6 inline-block transition">
-          ← Back to all sessions
-        </Link>
+        <div className="flex items-center justify-between mb-6">
+          <Link href={backUrl} className="text-sm text-gray-400 hover:text-gray-600 transition">
+            ← Back to all sessions
+          </Link>
+          <DeleteButton sessionId={sessionId} token={token ?? ''} candidateName={session.candidateName} />
+        </div>
 
         {/* Candidate card */}
         <div className="bg-white rounded-2xl border border-gray-100 p-6 mb-5">
